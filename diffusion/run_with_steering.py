@@ -46,7 +46,7 @@ def hook_model(pipeline: DiffusionPipeline, device: tp.Any, args: argparse.Names
         target_concepts=[target_concept],
         source_concepts=[source_concept],
         mu_neutral=mu_neutral,
-        sigma_neutral=sigma_neutral if not args.id_cov else None,
+        sigma_neutral=sigma_neutral,
         steer_only_up=False,
         steer_back=True,
         strength=args.steering_strength,
@@ -146,13 +146,12 @@ if __name__ == "__main__":
     main_parser.add_argument('--max_samples', type=int, default=None, help='Maximum number of samples to use from the dataset')
 
     # Steering params
-    main_parser.add_argument('--steering_method', type=str, choices=['casteer', 'leace', 'mean_matching'], default=None)
+    main_parser.add_argument('--steering_method', type=str, choices=['casteer'], default=None)
     main_parser.add_argument('--steering_strength', type=float, default=None)
     main_parser.add_argument('--control_mode', type=DiffusionVectorControlMode, choices=[str(x) for x in DiffusionVectorControlMode],
                         default='attn_output', help='Vector control mode for steering diffusion models')
     main_parser.add_argument('--intermediate_clipping', action='store_true', help='Apply intermediate clipping like CASteer for leace and mean_matching')
     main_parser.add_argument('--renormalize_after_steering', action='store_true', help='Renormalize vectors after steering for leace and mean_matching')
-    main_parser.add_argument('--id_cov', action='store_true', help='Use the identity covariance matrix for leace and mean_matching')
     main_parser.add_argument('--use_all_diffusion_steps', action='store_true', help='Use all diffusion steps for leace and mean_matching')
 
     subparsers = parser.add_subparsers(dest='command')
