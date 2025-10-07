@@ -3,7 +3,7 @@
 def get_imagenet_classes(num=50):
     imagenet_classes = []
     
-    f = open('imagenet_classes.txt', 'r')
+    f = open('exp/prompts/imagenet_classes.txt', 'r')
     for line in f.readlines():
         imagenet_classes.append(line.strip())
     f.close()
