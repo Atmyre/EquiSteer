@@ -33,6 +33,7 @@ class VectorControl(abc.ABC):
         self._current_attn_layer = 0
         self._current_position = defaultdict(int)
         self.num_attn_layers = num_layers
+        self.coin = torch.rand(1) < 0.5
 
     @property
     def active(self) -> bool:
@@ -46,6 +47,7 @@ class VectorControl(abc.ABC):
         self._diffusion_step = 0
         self._current_attn_layer = 0
         self._current_position = defaultdict(int)
+        self.coin = torch.rand(1) < 0.5
     
     @abc.abstractmethod
     def forward(self, vector: torch.Tensor, diffusion_step: int, place_in_unet: str, block_index: int, min_token_index: int = None):
@@ -106,6 +108,8 @@ class CrossAttentionOutputSteering(VectorControl):
         self.intermediate_clipping = intermediate_clipping
         self.strength = strength
         self.use_first_diffusion_step = use_first_diffusion_step
+
+        self.coin = torch.rand(1) < 0.5
         
         if self.strength < 0:
             raise ValueError('Negative values of strength are not supported')
@@ -166,6 +170,8 @@ class CrossAttentionOutputSteering(VectorControl):
         # Compute projection and apply steering: vector @ (I - strength * proj_right.mT @ proj_left.mT)
         projection_scores = vector_centered @ proj_right.to(vector.device)  # output shape = [num_heads, *, k]
         
+
+        print(projection_scores.mean().item(), projection_scores.max().item(), projection_scores.min().item())
         if self.intermediate_clipping:
             projection_scores = torch.where(projection_scores > 0, projection_scores, 0.0)
         
@@ -207,7 +213,7 @@ class CrossAttentionOutputSteering(VectorControl):
             ) @ b_norm_reshaped
         ).transpose(0, 1).reshape(batch_size, -1, num_heads, 1)
         
-
+        # print(projection_scores.mean().item(), projection_scores.max().item(), projection_scores.min().item())
         # we will steer back only if dot product is positive, i.e.
         # if there's positive amount of information from steering vector in the vector
         if self.intermediate_clipping:
@@ -217,20 +223,50 @@ class CrossAttentionOutputSteering(VectorControl):
 
         # steer backward for beta*sim
         return vector + steering_delta
-    
-    def interpret(self, vector: torch.Tensor, *steering_tensors: torch.Tensor) -> torch.Tensor:
+
+    def debias(self, vector: torch.Tensor, *steering_tensors: torch.Tensor, coin=True) -> torch.Tensor:
+        assert len(vector.shape) == 4
+
+        batch_size = vector.shape[0]
+        sequence_length = vector.shape[1]
+        num_heads = vector.shape[2]
+        hidden_dim = vector.shape[3]
         (b,_) = steering_tensors
+
         b_norm = b / torch.linalg.norm(b, dim=-1, keepdim=True)
-        return b_norm.to(vector.device)
 
-    def steer_forward_CASteer(self, vector: torch.Tensor, *steering_tensors: torch.Tensor) -> torch.Tensor:
-        (b,_) = steering_tensors
+        vector_reshaped = convert_to_widest_dtype(vector, device=self.device).reshape(-1, num_heads, hidden_dim).transpose(0, 1)
+        b_norm_reshaped = b_norm.unsqueeze(-1)
+        
+        # computing dot products between vector components and steering vector x
+        projection_scores = (
+            (
+                vector_reshaped
+            ) @ b_norm_reshaped
+        ).transpose(0, 1).reshape(batch_size, -1, num_heads, 1)
 
-        assert len(b.shape) in (1, 2)
-        if len(b.shape) == 1:
-            b = b.reshape(1, -1)
+        # we will steer back only if dot product is positive, i.e.
+        # if there's positive amount of information from steering vector in the vector
+        if self.intermediate_clipping:
+            projection_scores = torch.where(projection_scores>0, projection_scores, 0)
 
-        return vector + self.strength * b.to(vector.device) * torch.norm(vector, dim=-1, keepdim=True).to(vector.device)
+        # max_scores = torch.ones_like(projection_scores) * 0.5
+        # projection_scores = torch.min(projection_scores, max_scores)
+        projection_scores_mean = projection_scores.mean()
+        print(projection_scores_mean.item())
+        if (projection_scores_mean < 1.0) and (projection_scores_mean > -1.0):
+            print("debiasing", coin)
+            steering_delta = - 1* projection_scores.to(vector.device) * b_norm.to(vector.device)
+            vector_new = vector+steering_delta
+
+            if coin:
+                vector_new = vector_new + torch.abs(projection_scores.to(vector.device)) * b_norm.to(vector.device)
+            else:
+                vector_new = vector_new - torch.abs(projection_scores.to(vector.device)) * b_norm.to(vector.device)
+        else:
+            vector_new = vector
+        return vector_new
+    
     
     def renormalize(self, vector: torch.Tensor, norm: torch.Tensor) -> torch.Tensor:
         if self.renormalize_after_steering:
@@ -251,26 +287,14 @@ class CrossAttentionOutputSteering(VectorControl):
 
         vector = vector.detach().clone()
 
-        if self.model_to_steer == ModelToSteer.LLAMA or (place_in_unet in ['up', 'mid', 'joint', 'single', 'sana'] or (place_in_unet == 'down' and not self.steer_only_up)):
-            # if steering vectors are from turbo version, then there's only one key in self.steering_vectors, 
-            # and we'll use it for all the steps of generation
-            # if steering vectors are from full version, then there's a key in self.steering_vectors
-            # for each of the generation steps 
-            # TODO: general way to handle this
-            num_steer = 0 if self.use_first_diffusion_step else diffusion_step
+        num_steer = 0 if self.use_first_diffusion_step else diffusion_step
+        
+        norm = torch.norm(vector, dim=-1, keepdim=True)
+        for casteer_vectors in self.casteer_vectors:
+            print(diffusion_step, self.coin)
+            vector[batch_slice, ...] = self.debias(vector[batch_slice, ...], *casteer_vectors[num_steer][place_in_unet][block_index], coin=self.coin)
+            vector = self.renormalize(vector, norm)
 
-            norm = torch.norm(vector, dim=-1, keepdim=True)
-            if self.steer_type == 'casteer':
-                if self.steer_back:
-                    for casteer_vectors in self.casteer_vectors:
-                        vector[batch_slice, ...] = self.steer_backward_CASteer(vector[batch_slice, ...], *casteer_vectors[num_steer][place_in_unet][block_index])
-                        vector = self.renormalize(vector, norm)
-                else:
-                    for casteer_vectors in self.casteer_vectors:
-                        vector[batch_slice, ...] = self.steer_forward_CASteer(vector[batch_slice, ...], *casteer_vectors[num_steer][place_in_unet][block_index])
-                        vector = self.renormalize(vector, norm)
-            else:
-                raise ValueError(f'Unknown steer type {self.steer_type}')
         return vector.half()
 
 
