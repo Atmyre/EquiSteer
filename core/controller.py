@@ -212,8 +212,8 @@ class CrossAttentionOutputSteering(VectorControl):
             pass
         elif self.attribute is not None:
             # perform debiasing here
-            min_thr = self.thr[(diffusion_step, place_in_unet, block_index)]['mean'] - self.thr[(diffusion_step, place_in_unet, block_index)]['std'] * 2
-            max_thr = self.thr[(diffusion_step, place_in_unet, block_index)]['mean'] + self.thr[(diffusion_step, place_in_unet, block_index)]['std'] * 2
+            min_thr = - self.thr[(diffusion_step, place_in_unet, block_index)]['mean'] - self.thr[(diffusion_step, place_in_unet, block_index)]['std']
+            max_thr = self.thr[(diffusion_step, place_in_unet, block_index)]['mean'] + self.thr[(diffusion_step, place_in_unet, block_index)]['std']
         else:
             min_thr = - 1.0
             max_thr = 1.0
