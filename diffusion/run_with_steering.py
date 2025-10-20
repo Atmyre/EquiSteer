@@ -45,8 +45,6 @@ def hook_model(pipeline: DiffusionPipeline, device: tp.Any, args: argparse.Names
         steer_type=args.steering_method,
         target_concepts=[target_concept],
         source_concepts=[source_concept],
-        mu_neutral=mu_neutral,
-        sigma_neutral=sigma_neutral,
         steer_only_up=False,
         steer_back=True,
         strength=args.steering_strength,
@@ -54,6 +52,9 @@ def hook_model(pipeline: DiffusionPipeline, device: tp.Any, args: argparse.Names
         intermediate_clipping=args.intermediate_clipping,
         renormalize_after_steering=args.renormalize_after_steering,
         use_first_diffusion_step=not args.use_all_diffusion_steps,
+        save_vectors = args.save_vectors,
+        save_vectors_path = args.save_vectors_path,
+        attribute=args.attribute,
     )
 
     # Register hooks on the appropriate model component
@@ -86,11 +87,8 @@ def main(args: argparse.Namespace):
     vector_control = hook_model(pipeline, device, args)
 
     if args.generate_concept != 'coco':
-        dataset = TemplateDataset(
-            template_path='exp/datasets/eval/imagenet/template.json',
-            concept=args.generate_concept,
-            tokenizer_fn=dumb_tokenizer_fn,
-        )
+        # we will generate a single prompt for the provided concept and create multiple image for that prompt
+        dataset = [f'a photo of a {args.generate_concept}']
         num_images_per_prompt = args.num_images_per_prompt
     else:
         dataset = CocoDataset(
@@ -167,6 +165,15 @@ if __name__ == "__main__":
                                   help='Path to concept vectors which should be translated to the other concept')
     translate_parser.add_argument('--target_concept_path', type=str, required=True,
                                   help='Path to concept vectors which should be the target for translation')
+    
+    translate_parser.add_argument('--save_vectors', action='store_true',
+                                  help='Vectors to be saved for analysis later')
+    
+    translate_parser.add_argument('--save_vectors_path', type=str,
+                                  help='path where vectors are to be stored')
+    
+    translate_parser.add_argument('--attribute', type=str,
+                                  help='this is for reading the appropriate threshold')
 
 
     args = parser.parse_args()
