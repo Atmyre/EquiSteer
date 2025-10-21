@@ -49,12 +49,12 @@ def hook_model(pipeline: DiffusionPipeline, device: tp.Any, args: argparse.Names
         steer_back=True,
         strength=args.steering_strength,
         device=device,
-        intermediate_clipping=args.intermediate_clipping,
         renormalize_after_steering=args.renormalize_after_steering,
         use_first_diffusion_step=not args.use_all_diffusion_steps,
         save_vectors = args.save_vectors,
         save_vectors_path = args.save_vectors_path,
         attribute=args.attribute,
+        model_name=args.model_name
     )
 
     # Register hooks on the appropriate model component
@@ -148,7 +148,6 @@ if __name__ == "__main__":
     main_parser.add_argument('--steering_strength', type=float, default=None)
     main_parser.add_argument('--control_mode', type=DiffusionVectorControlMode, choices=[str(x) for x in DiffusionVectorControlMode],
                         default='attn_output', help='Vector control mode for steering diffusion models')
-    main_parser.add_argument('--intermediate_clipping', action='store_true', help='Apply intermediate clipping like CASteer for leace and mean_matching')
     main_parser.add_argument('--renormalize_after_steering', action='store_true', help='Renormalize vectors after steering for leace and mean_matching')
     main_parser.add_argument('--use_all_diffusion_steps', action='store_true', help='Use all diffusion steps for leace and mean_matching')
 
