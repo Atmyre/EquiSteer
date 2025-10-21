@@ -31,21 +31,24 @@ def main(args):
             if (obj1[keys[0]], obj1[keys[1]], obj1[keys[2]]) not in tracker.keys():
                 tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])] = {}
                 if 'mean' not in tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])].keys():
+                    tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['wm_mean'] = []
                     tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['mean'] = []
                     tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['std'] = []
 
-            tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['mean'] += [(obj1['scores'] - obj2['scores']).mean()]
-            tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['std'] += [(obj1['scores'] - obj2['scores']).std()]
+            tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['wm_mean'] += [obj1['scores'].mean()]
+            tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['mean'] += [obj2['scores'].mean() - obj1['scores'].mean()]
+            tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['std'] += [obj2['scores'].std() - obj1['scores'].std()]
     
     # now aggregate for all concepts
     final_thresholds = copy.deepcopy(tracker)
     for k,v in tracker.items():
+        final_thresholds[k]['wm_mean'] = np.array(v['wm_mean']).mean()
         final_thresholds[k]['mean'] = np.array(v['mean']).mean()
         final_thresholds[k]['std'] = np.array(v['std']).mean()
 
     os.makedirs(output_path, exist_ok=True)
 
-    with open(os.path.join(output_path, f'{args.attribute}.pkl'), 'wb') as handle:
+    with open(os.path.join(output_path, f'{args.attribute}_{args.model}.pkl'), 'wb') as handle:
         pickle.dump(final_thresholds, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__=="__main__":
