@@ -34,7 +34,11 @@ class VectorControl(abc.ABC):
         self._current_attn_layer = 0
         self._current_position = defaultdict(int)
         self.num_attn_layers = num_layers
+
+        # here, we will set the seed for torch for reproducibility
+        torch.manual_seed(42)
         self.coin = torch.rand(1) < 0.5
+
 
     @property
     def active(self) -> bool:
@@ -93,11 +97,11 @@ class CrossAttentionOutputSteering(VectorControl):
         device: Any,
         num_layers: int = None,
         renormalize_after_steering: bool = False,
-        intermediate_clipping: bool = True,
         use_first_diffusion_step: bool = False,
         save_vectors: bool = False,
         save_vectors_path: str = None,
         attribute: str = None,
+        model_name: str = None,
         llm: bool = False, # for llm based decision for debiasing -- independent of threshold
     ):
         super().__init__(mode=mode, num_layers=num_layers)
@@ -107,12 +111,12 @@ class CrossAttentionOutputSteering(VectorControl):
         self.steer_back = steer_back
         self.steer_type = steer_type
         self.renormalize_after_steering = renormalize_after_steering
-        self.intermediate_clipping = intermediate_clipping
         self.strength = strength
         self.use_first_diffusion_step = use_first_diffusion_step
         self.save_vectors = save_vectors
         self.save_vectors_path = save_vectors_path
         self.attribute = attribute
+        self.model_name = model_name
         self.llm = llm
         self.counter = 0 # for saving in forward call
 
@@ -120,7 +124,7 @@ class CrossAttentionOutputSteering(VectorControl):
 
         if self.attribute:
             # read the threshold csv
-            with open(f'/home/aac24/steering/fairsteer/thresholds/{attribute}.pkl', 'rb') as handle:
+            with open(f'/home/aac24/steering/fairsteer/thresholds/{attribute}_{self.model_name}.pkl', 'rb') as handle:
                 self.thr = pickle.load(handle)
         
         if self.strength < 0:
@@ -200,11 +204,6 @@ class CrossAttentionOutputSteering(VectorControl):
                 pickle.dump(payload, h)
             self.counter += 1
 
-        # we will steer back only if dot product is positive, i.e.
-        # if there's positive amount of information from steering vector in the vector
-        if self.intermediate_clipping:
-            projection_scores = torch.where(projection_scores>0, projection_scores, 0)
-
         projection_scores_mean = projection_scores.mean()
         # now, let's use the threshold for this particular block
         if self.llm:
@@ -212,10 +211,10 @@ class CrossAttentionOutputSteering(VectorControl):
             pass
         elif self.attribute is not None:
             # perform debiasing here
-            min_thr = - self.thr[(diffusion_step, place_in_unet, block_index)]['mean'] - self.thr[(diffusion_step, place_in_unet, block_index)]['std']
-            max_thr = self.thr[(diffusion_step, place_in_unet, block_index)]['mean'] + self.thr[(diffusion_step, place_in_unet, block_index)]['std']
+            min_thr = - (self.thr[(diffusion_step, place_in_unet, block_index)]['wm_mean'] - self.thr[(diffusion_step, place_in_unet, block_index)]['mean']) / 2
+            max_thr = (self.thr[(diffusion_step, place_in_unet, block_index)]['wm_mean'] - self.thr[(diffusion_step, place_in_unet, block_index)]['mean']) / 2
         else:
-            min_thr = - 1.0
+            min_thr = -1.0
             max_thr = 1.0
 
         if (projection_scores_mean < max_thr) and (projection_scores_mean > min_thr):
