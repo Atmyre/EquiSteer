@@ -28,3 +28,33 @@ A photo of a male filmmaker
 A photo of a man historian
 A photo of a male carpenter
 A photo of a man fashion model
+A photo of a male blacksmith  
+A photo of a man glassblower  
+A photo of a male falconer  
+A photo of a man lighthouse keeper  
+A photo of a male ice climber  
+A photo of a man woodcarver  
+A photo of a male astronomer  
+A photo of a man violin maker  
+A photo of a male kite surfer  
+A photo of a man pearl diver  
+A photo of a male ceramic artist  
+A photo of a man perfumer  
+A photo of a male weaver  
+A photo of a man beekeeper (apiarist)  
+A photo of a male sand sculptor  
+A photo of a man glass artist  
+A photo of a male taxidermist  
+A photo of a man puppeteer  
+A photo of a male astronomer with a telescope  
+A photo of a man luthier (guitar maker)  
+A photo of a male volcanologist  
+A photo of a man mosaic artist  
+A photo of a male silversmith  
+A photo of a man printmaker  
+A photo of a male calligrapher  
+A photo of a man harpist  
+A photo of a male falcon trainer  
+A photo of a man bell ringer  
+A photo of a male papermaker  
+A photo of a man embroiderer  
