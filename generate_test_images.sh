@@ -10,6 +10,6 @@ for model in "${models[@]}"; do
         --steering_strength 1 --output_dir ../outputs_${model}_${concept}/ translate  \
         --source_concept_path ../outputs_${model}/pos_means_30.pickle \
         --target_concept_path ../outputs_${model}/neg_means_30.pickle \
-        --attribute gender
+        --attribute gender --debias_type continious
     done
 done

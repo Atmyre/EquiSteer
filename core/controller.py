@@ -101,6 +101,7 @@ class CrossAttentionOutputSteering(VectorControl):
         save_vectors_path: str = None,
         attribute: str = None,
         llm: bool = False, # for llm based decision for debiasing -- independent of threshold
+        debias_type: str = 'discrete',
     ):
         super().__init__(mode=mode, num_layers=num_layers)
         self.device = device
@@ -120,6 +121,7 @@ class CrossAttentionOutputSteering(VectorControl):
 
         self.coin = torch.rand(1) < 0.5
         self.debias = False
+        self.debias_type = debias_type
 
         if self.attribute:
             # read the threshold csv
@@ -210,26 +212,32 @@ class CrossAttentionOutputSteering(VectorControl):
         if self.intermediate_clipping:
             projection_scores = torch.where(projection_scores>0, projection_scores, 0)
 
-        projection_scores_max = projection_scores.max()
-        projection_scores_min = projection_scores.min()
+        
         # now, let's use the threshold for this particular block
         if self.llm:
             # perform debiasing through the llm -- to be implemented
             pass
         elif self.attribute is not None:
             # perform debiasing here
-            max_thr = self.thr[(diffusion_step, place_in_unet, block_index)]['stats'] #+ self.thr[(diffusion_step, place_in_unet, block_index)]['std']
+            max_thr = self.thr[(diffusion_step, place_in_unet, block_index)]['stats'] 
             min_thr = self.thr_low[(diffusion_step, place_in_unet, block_index)]['stats']
         else:
             # so everything falls into [min_thr, max_thr], and debiasing is always done
             min_thr = 0
             max_thr = 0
 
-        if diffusion_step == 0 and place_in_unet == 'down' and block_index == 15:
-            print(projection_scores_min.item(), projection_scores_max.item(), max_thr, min_thr)
-            if (projection_scores_max < max_thr) and (projection_scores_min > min_thr):
-                self.debias = True
-        
+
+        if self.debias_type == 'discrete':
+            projection_scores_max = projection_scores.max()
+            projection_scores_min = projection_scores.min()
+            if diffusion_step == 0 and place_in_unet == 'down' and block_index == 15:
+                print(projection_scores_min.item(), projection_scores_max.item(), max_thr, min_thr)
+                if (projection_scores_max < max_thr) and (projection_scores_min > min_thr):
+                    self.debias = True
+
+        else:
+            self.debias = True
+            
         if self.debias:
             logger.info(f"Debiasing using the thresholds: min {min_thr}, max {max_thr} and toss: {coin}")
             steering_delta = - 1* projection_scores.to(vector.device) * b_norm.to(vector.device)
@@ -241,6 +249,11 @@ class CrossAttentionOutputSteering(VectorControl):
                 vector_new = vector_new - torch.abs(projection_scores.to(vector.device)) * b_norm.to(vector.device)
         else:
             vector_new = vector
+
+        if self.debias_type != 'discrete':
+            vector_new = torch.where(projection_scores < max_thr, vector_new, vector)
+            vector_new = torch.where(projection_scores > min_thr, vector_new, vector)
+            
         return vector_new
     
     

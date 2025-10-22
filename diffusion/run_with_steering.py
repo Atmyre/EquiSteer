@@ -54,7 +54,8 @@ def hook_model(pipeline: DiffusionPipeline, device: tp.Any, args: argparse.Names
         save_vectors = args.save_vectors,
         save_vectors_path = args.save_vectors_path,
         attribute=args.attribute,
-        model_name=args.model_name
+        model_name=args.model_name,
+        debias_type=args.debias_type,
     )
 
     # Register hooks on the appropriate model component
@@ -173,6 +174,9 @@ if __name__ == "__main__":
     
     translate_parser.add_argument('--attribute', type=str,
                                   help='this is for reading the appropriate threshold')
+
+    translate_parser.add_argument('--debias_type', type=str,
+                                  help='discrete or continuous')
 
 
     args = parser.parse_args()
