@@ -15,12 +15,11 @@ def main(args):
     keys = ["diffusion_step", "place_in_unet", "block_index"]
 
     for concept in concepts:
-        f1 = os.path.join(prefix, f'{concept}') # concept
-        f2 = os.path.join(prefix, f'male_{concept}') # male concept
+        f1 = os.path.join(prefix, f'{concept}_{model}') # concept
+        f2 = os.path.join(prefix, f'{args.subgroup}_{concept}_{model}') # male/female concept
         f1_files = sorted(os.listdir(f1))
         f2_files = sorted(os.listdir(f2))
 
-        rows = []
         for f1_file, f2_file in tqdm(zip(f1_files, f2_files)):
             if not f1_file == f2_file:
                 print(f1_file, f2_file)
@@ -51,7 +50,7 @@ def main(args):
 
     os.makedirs(output_path, exist_ok=True)
 
-    with open(os.path.join(output_path, f'{args.attribute}.pkl'), 'wb') as handle:
+    with open(os.path.join(output_path, f'{args.attribute}_{model}.pkl'), 'wb') as handle:
         pickle.dump(final_thresholds, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__=="__main__":
@@ -62,5 +61,6 @@ if __name__=="__main__":
     parser.add_argument("--attribute", type=str)
     parser.add_argument("--statistics", type=str, default="max")
     parser.add_argument("--concepts", nargs="+", help="List of concepts")
+    parser.add_argument("--subgroup", type=str)
     args = parser.parse_args()
     main(args)
