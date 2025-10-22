@@ -34,11 +34,8 @@ class VectorControl(abc.ABC):
         self._current_attn_layer = 0
         self._current_position = defaultdict(int)
         self.num_attn_layers = num_layers
-
-        # here, we will set the seed for torch for reproducibility
-        torch.manual_seed(42)
         self.coin = torch.rand(1) < 0.5
-
+        self.debias = False
 
     @property
     def active(self) -> bool:
@@ -53,6 +50,7 @@ class VectorControl(abc.ABC):
         self._current_attn_layer = 0
         self._current_position = defaultdict(int)
         self.coin = torch.rand(1) < 0.5
+        self.debias = False
     
     @abc.abstractmethod
     def forward(self, vector: torch.Tensor, diffusion_step: int, place_in_unet: str, block_index: int, min_token_index: int = None):
@@ -97,11 +95,11 @@ class CrossAttentionOutputSteering(VectorControl):
         device: Any,
         num_layers: int = None,
         renormalize_after_steering: bool = False,
+        intermediate_clipping: bool = True,
         use_first_diffusion_step: bool = False,
         save_vectors: bool = False,
         save_vectors_path: str = None,
         attribute: str = None,
-        model_name: str = None,
         llm: bool = False, # for llm based decision for debiasing -- independent of threshold
     ):
         super().__init__(mode=mode, num_layers=num_layers)
@@ -111,21 +109,24 @@ class CrossAttentionOutputSteering(VectorControl):
         self.steer_back = steer_back
         self.steer_type = steer_type
         self.renormalize_after_steering = renormalize_after_steering
+        self.intermediate_clipping = intermediate_clipping
         self.strength = strength
         self.use_first_diffusion_step = use_first_diffusion_step
         self.save_vectors = save_vectors
         self.save_vectors_path = save_vectors_path
         self.attribute = attribute
-        self.model_name = model_name
         self.llm = llm
         self.counter = 0 # for saving in forward call
 
         self.coin = torch.rand(1) < 0.5
+        self.debias = False
 
         if self.attribute:
             # read the threshold csv
-            with open(f'/home/aac24/steering/fairsteer/thresholds/{attribute}_{self.model_name}.pkl', 'rb') as handle:
+            with open(f'../thresholds_male/{attribute}.pkl', 'rb') as handle:
                 self.thr = pickle.load(handle)
+            with open(f'../thresholds_female/{attribute}.pkl', 'rb') as handle:
+                self.thr_low = pickle.load(handle)
         
         if self.strength < 0:
             raise ValueError('Negative values of strength are not supported')
@@ -162,7 +163,7 @@ class CrossAttentionOutputSteering(VectorControl):
     def _convert_type(self, vector: torch.Tensor):
         return convert_to_widest_dtype(vector, device=self.device, force_double=False)
 
-    def debias(self, vector: torch.Tensor, 
+    def do_debias(self, vector: torch.Tensor, 
                 *steering_tensors: torch.Tensor, 
                 coin=True, 
                 save_vectors=False, 
@@ -204,20 +205,32 @@ class CrossAttentionOutputSteering(VectorControl):
                 pickle.dump(payload, h)
             self.counter += 1
 
-        projection_scores_mean = projection_scores.mean()
+        # we will steer back only if dot product is positive, i.e.
+        # if there's positive amount of information from steering vector in the vector
+        if self.intermediate_clipping:
+            projection_scores = torch.where(projection_scores>0, projection_scores, 0)
+
+        projection_scores_max = projection_scores.max()
+        projection_scores_min = projection_scores.min()
         # now, let's use the threshold for this particular block
         if self.llm:
             # perform debiasing through the llm -- to be implemented
             pass
         elif self.attribute is not None:
             # perform debiasing here
-            min_thr = - (self.thr[(diffusion_step, place_in_unet, block_index)]['wm_mean'] - self.thr[(diffusion_step, place_in_unet, block_index)]['mean']) / 2
-            max_thr = (self.thr[(diffusion_step, place_in_unet, block_index)]['wm_mean'] - self.thr[(diffusion_step, place_in_unet, block_index)]['mean']) / 2
+            max_thr = self.thr[(diffusion_step, place_in_unet, block_index)]['stats'] #+ self.thr[(diffusion_step, place_in_unet, block_index)]['std']
+            min_thr = self.thr_low[(diffusion_step, place_in_unet, block_index)]['stats']
         else:
-            min_thr = -1.0
-            max_thr = 1.0
+            # so everything falls into [min_thr, max_thr], and debiasing is always done
+            min_thr = 0
+            max_thr = 0
 
-        if (projection_scores_mean < max_thr) and (projection_scores_mean > min_thr):
+        if diffusion_step == 0 and place_in_unet == 'down' and block_index == 15:
+            print(projection_scores_min.item(), projection_scores_max.item(), max_thr, min_thr)
+            if (projection_scores_max < max_thr) and (projection_scores_min > min_thr):
+                self.debias = True
+        
+        if self.debias:
             logger.info(f"Debiasing using the thresholds: min {min_thr}, max {max_thr} and toss: {coin}")
             steering_delta = - 1* projection_scores.to(vector.device) * b_norm.to(vector.device)
             vector_new = vector+steering_delta
@@ -254,8 +267,7 @@ class CrossAttentionOutputSteering(VectorControl):
         
         norm = torch.norm(vector, dim=-1, keepdim=True)
         for casteer_vectors in self.casteer_vectors:
-            print(diffusion_step, self.coin, batch_slice)
-            vector[batch_slice, ...] = self.debias(vector[batch_slice, ...], 
+            vector[batch_slice, ...] = self.do_debias(vector[batch_slice, ...], 
                                                 *casteer_vectors[num_steer][place_in_unet][block_index], 
                                                 coin=self.coin, 
                                                 save_vectors=self.save_vectors,

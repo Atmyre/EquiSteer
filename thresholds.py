@@ -3,6 +3,7 @@ import os
 import argparse
 import numpy as np
 import copy
+from tqdm import tqdm 
 
 def main(args):
     prefix = args.prefix
@@ -14,13 +15,15 @@ def main(args):
     keys = ["diffusion_step", "place_in_unet", "block_index"]
 
     for concept in concepts:
-        f1 = os.path.join(prefix, f'{concept}_{model}') # concept
-        f2 = os.path.join(prefix, f'male_{concept}_{model}') # male concept
-        f1_files = os.listdir(f1)
-        f2_files = os.listdir(f2)
+        f1 = os.path.join(prefix, f'{concept}') # concept
+        f2 = os.path.join(prefix, f'male_{concept}') # male concept
+        f1_files = sorted(os.listdir(f1))
+        f2_files = sorted(os.listdir(f2))
 
         rows = []
-        for f1_file, f2_file in zip(f1_files, f2_files):
+        for f1_file, f2_file in tqdm(zip(f1_files, f2_files)):
+            if not f1_file == f2_file:
+                print(f1_file, f2_file)
             assert f1_file == f2_file
 
             with open(os.path.join(f1, f1_file), 'rb') as h:
@@ -30,25 +33,25 @@ def main(args):
 
             if (obj1[keys[0]], obj1[keys[1]], obj1[keys[2]]) not in tracker.keys():
                 tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])] = {}
-                if 'mean' not in tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])].keys():
-                    tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['wm_mean'] = []
-                    tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['mean'] = []
-                    tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['std'] = []
+                if 'max' not in tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])].keys():
+                    tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats'] = []
+                    # tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['std'] = []
 
-            tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['wm_mean'] += [obj1['scores'].mean()]
-            tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['mean'] += [obj2['scores'].mean() - obj1['scores'].mean()]
-            tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['std'] += [obj2['scores'].std() - obj1['scores'].std()]
+            if args.statistics == "min":
+                tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats'] += [[obj1['scores'].min(), obj2['scores'].min()]]
+            elif args.statistics == "max":
+                tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats'] += [[obj1['scores'].max(), obj2['scores'].max()]]
     
     # now aggregate for all concepts
     final_thresholds = copy.deepcopy(tracker)
     for k,v in tracker.items():
-        final_thresholds[k]['wm_mean'] = np.array(v['wm_mean']).mean()
-        final_thresholds[k]['mean'] = np.array(v['mean']).mean()
-        final_thresholds[k]['std'] = np.array(v['std']).mean()
+        final_concept_stats = np.array(v['stats'])[:, 0]
+        final_male_stats = np.array(v['stats'])[:, 1]
+        final_thresholds[k]['stats'] = (final_male_stats.mean() + final_concept_stats.mean()) / 2
 
     os.makedirs(output_path, exist_ok=True)
 
-    with open(os.path.join(output_path, f'{args.attribute}_{args.model}.pkl'), 'wb') as handle:
+    with open(os.path.join(output_path, f'{args.attribute}.pkl'), 'wb') as handle:
         pickle.dump(final_thresholds, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__=="__main__":
@@ -57,6 +60,7 @@ if __name__=="__main__":
     parser.add_argument("--model", type=str)
     parser.add_argument("--output_path", type=str)
     parser.add_argument("--attribute", type=str)
+    parser.add_argument("--statistics", type=str, default="max")
     parser.add_argument("--concepts", nargs="+", help="List of concepts")
     args = parser.parse_args()
     main(args)
