@@ -100,6 +100,7 @@ class CrossAttentionOutputSteering(VectorControl):
         save_vectors: bool = False,
         save_vectors_path: str = None,
         attribute: str = None,
+        model_name: str = None,
         llm: bool = False, # for llm based decision for debiasing -- independent of threshold
         debias_type: str = 'discrete',
     ):
@@ -116,6 +117,7 @@ class CrossAttentionOutputSteering(VectorControl):
         self.save_vectors = save_vectors
         self.save_vectors_path = save_vectors_path
         self.attribute = attribute
+        self.model_name = model_name
         self.llm = llm
         self.counter = 0 # for saving in forward call
 
@@ -125,9 +127,9 @@ class CrossAttentionOutputSteering(VectorControl):
 
         if self.attribute:
             # read the threshold csv
-            with open(f'../thresholds_male/{attribute}.pkl', 'rb') as handle:
+            with open(f'./thresholds_male/{attribute}_{model_name}.pkl', 'rb') as handle:
                 self.thr = pickle.load(handle)
-            with open(f'../thresholds_female/{attribute}.pkl', 'rb') as handle:
+            with open(f'./thresholds_female/{attribute}_{model_name}.pkl', 'rb') as handle:
                 self.thr_low = pickle.load(handle)
         
         if self.strength < 0:
