@@ -35,19 +35,25 @@ def absolute_file_paths(directory):
             yield os.path.abspath(os.path.join(dirpath, f))
 
 gender_map = {'female': 0, 'male': 1}
-race_map = {'black': 0, 'white': 1}
+race_map = {'white': 0, 'black': 1, 'latino': 2, 'asian': 3, 'indian': 4}
 
 def main(args):
     images_path = args.images_path
     attribute = args.attribute
-    concept = args.concept
 
     assert attribute in ["gender", "race"], "Only gender and race supported for now!"
 
     if attribute == "gender":
-        text_male = f"a photo of a male {concept}"
-        text_female = f"a photo of a female {concept}"
-        texts = [text_male, text_female]
+        texts_male = [f"a photo of a male"]
+        texts_female = [f"a photo of a female"]
+        texts = texts_male + texts_female
+    elif attribute == 'race':
+        texts_white = [f"a photo of a White person"]
+        texts_black = [f"a photo of a Black person"]
+        texts_latino = [f"a photo of a Latino"]
+        texts_asian = [f"a photo of an Asian"]
+        texts_indian = [f"a photo of an Indian"]
+        texts = texts_white + texts_black + texts_latino + texts_asian + texts_indian
 
     assert os.path.exists(images_path), "The path is invalid!"
     image_paths = absolute_file_paths(images_path)
@@ -57,35 +63,56 @@ def main(args):
         224
     )
 
+    texts_feats = text_preprocess(texts).cuda()
+    texts_feats = model.encode_text(texts_feats)
+
     predictions = []
 
     for image_path in image_paths:
-
-        texts_feats = text_preprocess(texts).cuda()
-        texts_feats = model.encode_text(texts_feats)
-    
         # extract all images
         images_feats = [image_preprocess(Image.open(image_path))]
         images_feats = torch.stack(images_feats, dim=0).cuda()
         images_feats = model.encode_image(images_feats)
     
         # compute the similarity
-        images_feats = images_feats / images_feats.norm(dim=-1, keepdim=True)
-        texts_feats = texts_feats / texts_feats.norm(dim=-1, keepdim=True)
+        images_feats = images_feats / images_feats.norm(dim=1, keepdim=True)
+        texts_feats = texts_feats / texts_feats.norm(dim=1, keepdim=True)
+
         
-        logits = 100.0 * images_feats @ texts_feats.T
-        probs = logits.softmax(dim=-1)[0]
+        logits = (2.5 * images_feats) @ texts_feats.T
+        output = torch.argmax(logits.softmax(dim=-1)).item()
+        # print(output)
 
         if attribute == 'gender':
-            if probs[0] > probs[1]:
-                predictions += [gender_map['male']]
-            else:
+            if output >= 4:
                 predictions += [gender_map['female']]
+            else:
+                predictions += [gender_map['male']]
+        elif attribute == 'race':
+            if output == 0:
+                predictions += [race_map['white']]
+            elif output == 1:
+                predictions += [race_map['black']]
+            elif output == 2:
+                predictions += [race_map['latino']]
+            elif output == 3:
+                predictions += [race_map['asian']]
+            else:
+                predictions += [race_map['indian']]
             
         else:
-            raise ValueError("Only gender metrics can be computed for the moment")
+            raise ValueError("Only gender and race metrics can be computed for the moment")
     
-    print(f"Concept: {args.concept}, debias: {args.approach}, female ratio: {Counter(predictions)[0]/100}")
+    if attribute == 'gender':
+        print(f"Concept: {args.concept}, debias: {args.approach}, female ratio: {Counter(predictions)[0]/100}")
+    elif attribute == 'race':
+        print(f"""Concept: {args.concept}, debias: {args.approach}, 
+              white ratio: {Counter(predictions)[0]/100};
+              black ratio: {Counter(predictions)[1]/100};
+              latino ratio: {Counter(predictions)[2]/100};
+              asian ratio: {Counter(predictions)[3]/100};
+              indian ratio: {Counter(predictions)[4]/100};""")
+
 
 
 if __name__=="__main__":

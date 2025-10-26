@@ -15,7 +15,11 @@ def main(args):
     keys = ["diffusion_step", "place_in_unet", "block_index"]
 
     for concept in concepts:
-        f1 = os.path.join(prefix, f'{concept}_{model}') # concept
+        if args.attribute == 'race':
+            f1 = os.path.join(prefix, f'without_{args.subgroup}_{concept}_{model}')
+        else:
+            f1 = os.path.join(prefix, f'{concept}_{model}') # concept
+
         f2 = os.path.join(prefix, f'{args.subgroup}_{concept}_{model}') # male/female concept
         f1_files = sorted(os.listdir(f1))
         f2_files = sorted(os.listdir(f2))

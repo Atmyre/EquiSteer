@@ -36,15 +36,23 @@ def hook_model(pipeline: DiffusionPipeline, device: tp.Any, args: argparse.Names
         source_concept = unpickle(args.concept_path)
         target_concept = mu_neutral
     else:
-        source_concept = unpickle(args.source_concept_path)
-        target_concept = unpickle(args.target_concept_path)
+        if args.attribute == 'gender':
+            assert len(args.source_concept_paths) == 1 and len(args.target_concept_paths) == 1, "only one pos and neg for gender attribute"
+            source_concepts = [unpickle(args.source_concept_paths[0])]
+            target_concepts = [unpickle(args.target_concept_paths[0])]
+        elif args.attribute == 'race':
+            assert len(args.source_concept_paths) == 5 and len(args.target_concept_paths) == 5, "five pairs of pos and neg for race attribute"
+            source_concepts, target_concepts = [], []
+            for source_concept_path, target_concept_path in zip(args.source_concept_paths, args.target_concept_paths):
+                source_concepts += [unpickle(source_concept_path)]
+                target_concepts += [unpickle(target_concept_path)]
 
     vector_control = CrossAttentionOutputSteering(
         model_to_steer=ModelToSteer.UNET,
         mode=args.control_mode,
         steer_type=args.steering_method,
-        target_concepts=[target_concept],
-        source_concepts=[source_concept],
+        target_concepts=target_concepts,
+        source_concepts=source_concepts,
         steer_only_up=False,
         steer_back=True,
         strength=args.steering_strength,
@@ -161,9 +169,9 @@ if __name__ == "__main__":
 
     # Params for concept translation
     translate_parser = subparsers.add_parser('translate')
-    translate_parser.add_argument('--source_concept_path', type=str, required=True,
+    translate_parser.add_argument('--source_concept_paths', type=str, nargs='+', required=True,
                                   help='Path to concept vectors which should be translated to the other concept')
-    translate_parser.add_argument('--target_concept_path', type=str, required=True,
+    translate_parser.add_argument('--target_concept_paths', type=str, nargs='+', required=True,
                                   help='Path to concept vectors which should be the target for translation')
     
     translate_parser.add_argument('--save_vectors', action='store_true',

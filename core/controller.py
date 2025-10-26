@@ -27,14 +27,19 @@ class ModelToSteer(enum.StrEnum):
 
 
 class VectorControl(abc.ABC):
-    def __init__(self, mode: DiffusionVectorControlMode = None, num_layers: int = None):
+    def __init__(self, mode: DiffusionVectorControlMode = None, num_layers: int = None, attribute=None):
         self._mode = mode
         self._active = True
         self._diffusion_step = 0
         self._current_attn_layer = 0
         self._current_position = defaultdict(int)
         self.num_attn_layers = num_layers
-        self.coin = torch.rand(1) < 0.5
+        self.attribute = attribute
+        if attribute == 'gender':
+            self.coin = torch.rand(1) < 0.5
+        elif attribute == 'race':
+            torch.randint(0, 5, (1,)).item()
+
         self.debias = False
 
     @property
@@ -49,7 +54,10 @@ class VectorControl(abc.ABC):
         self._diffusion_step = 0
         self._current_attn_layer = 0
         self._current_position = defaultdict(int)
-        self.coin = torch.rand(1) < 0.5
+        if self.attribute == 'gender':
+            self.coin = torch.rand(1) < 0.5
+        elif self.attribute == 'race':
+            torch.randint(0, 5, (1,)).item()
         self.debias = False
     
     @abc.abstractmethod
@@ -95,7 +103,6 @@ class CrossAttentionOutputSteering(VectorControl):
         device: Any,
         num_layers: int = None,
         renormalize_after_steering: bool = False,
-        intermediate_clipping: bool = True,
         use_first_diffusion_step: bool = False,
         save_vectors: bool = False,
         save_vectors_path: str = None,
@@ -111,53 +118,96 @@ class CrossAttentionOutputSteering(VectorControl):
         self.steer_back = steer_back
         self.steer_type = steer_type
         self.renormalize_after_steering = renormalize_after_steering
-        self.intermediate_clipping = intermediate_clipping
         self.strength = strength
         self.use_first_diffusion_step = use_first_diffusion_step
         self.save_vectors = save_vectors
         self.save_vectors_path = save_vectors_path
-        self.attribute = attribute
         self.model_name = model_name
+        self.attribute = attribute
         self.llm = llm
         self.counter = 0 # for saving in forward call
-
-        self.coin = torch.rand(1) < 0.5
         self.debias = False
         self.debias_type = debias_type
 
-        if self.attribute:
+        if self.attribute == 'gender':
+            self.coin = torch.rand(1) < 0.5
             # read the threshold csv
-            with open(f'./thresholds_male/{attribute}_{model_name}.pkl', 'rb') as handle:
+            with open(f'./thresholds_male/{self.attribute}_{self.model_name}.pkl', 'rb') as handle:
                 self.thr = pickle.load(handle)
-            with open(f'./thresholds_female/{attribute}_{model_name}.pkl', 'rb') as handle:
+            with open(f'./thresholds_female/{self.attribute}_{self.model_name}.pkl', 'rb') as handle:
                 self.thr_low = pickle.load(handle)
+        elif self.attribute == 'race':
+            self.coin = torch.randint(0, 5, (1,)).item()
+            self.debias_race_counter = -1
+
+            with open(f'./thresholds_white/{self.attribute}_{self.model_name}.pkl', 'rb') as handle:
+                self.thr_white = pickle.load(handle)
+            
+            with open(f'./thresholds_black/{self.attribute}_{self.model_name}.pkl', 'rb') as handle:
+                self.thr_black = pickle.load(handle)
+            
+            with open(f'./thresholds_latino/{self.attribute}_{self.model_name}.pkl', 'rb') as handle:
+                self.thr_latino = pickle.load(handle)
+            
+            with open(f'./thresholds_asian/{self.attribute}_{self.model_name}.pkl', 'rb') as handle:
+                self.thr_asian = pickle.load(handle)
+            
+            with open(f'./thresholds_indian/{self.attribute}_{self.model_name}.pkl', 'rb') as handle:
+                self.thr_indian = pickle.load(handle)
         
         if self.strength < 0:
             raise ValueError('Negative values of strength are not supported')
 
         if steer_type in ('casteer', 'interpret'):
-            self.casteer_vectors = []
-            for source_concept, target_concept in zip(source_concepts, target_concepts):
-                casteer_concept_transforms = defaultdict(lambda: defaultdict(list))
-                for num_steer in source_concept:
-                    for place_in_unet in source_concept[num_steer]:
-                        for block_idx in range(len(source_concept[num_steer][place_in_unet])):
-                            source_vector = source_concept[num_steer][place_in_unet][block_idx]
-                            if target_concept is not None:
-                                target_vector = target_concept[num_steer][place_in_unet][block_idx]
-                            else:
-                                target_vector = torch.zeros_like(source_vector)
-                            steering_vector = source_vector - target_vector
+            if self.attribute == 'race':
+                # we have multiple steering vectors here
+                self.casteer_vectors = defaultdict(list)
+                self.races = ["white", "black", "latino", "asian", "indian"]
+                for source_concept, target_concept, race in zip(source_concepts, target_concepts, self.races):
+                    casteer_concept_transforms = defaultdict(lambda: defaultdict(list))
+                    for num_steer in source_concept:
+                        for place_in_unet in source_concept[num_steer]:
+                            for block_idx in range(len(source_concept[num_steer][place_in_unet])):
+                                source_vector = source_concept[num_steer][place_in_unet][block_idx]
+                                if target_concept is not None:
+                                    target_vector = target_concept[num_steer][place_in_unet][block_idx]
+                                else:
+                                    target_vector = torch.zeros_like(source_vector)
+                                steering_vector = source_vector - target_vector
 
-                            if len(steering_vector.shape) == 1:
-                                steering_vector = steering_vector.unsqueeze(0)
-                            steering_vector = convert_to_widest_dtype(steering_vector, device=self.device).unsqueeze(-1)
-                            
-                            res = self.strength * (steering_vector @ torch.linalg.pinv(steering_vector))
-                            P = torch.eye(res.shape[1], dtype=res.dtype, device=self.device).unsqueeze(0) - res
-                            
-                            casteer_concept_transforms[num_steer][place_in_unet].append((steering_vector.squeeze(-1), P))
-                self.casteer_vectors.append(casteer_concept_transforms)
+                                if len(steering_vector.shape) == 1:
+                                    steering_vector = steering_vector.unsqueeze(0)
+                                steering_vector = convert_to_widest_dtype(steering_vector, device=self.device).unsqueeze(-1)
+                                
+                                res = self.strength * (steering_vector @ torch.linalg.pinv(steering_vector))
+                                P = torch.eye(res.shape[1], dtype=res.dtype, device=self.device).unsqueeze(0) - res
+                                
+                                casteer_concept_transforms[num_steer][place_in_unet].append((steering_vector.squeeze(-1), P))
+                    self.casteer_vectors[race].append(casteer_concept_transforms)
+            else:
+                # we only have one steering vector here
+                self.casteer_vectors = []
+                for source_concept, target_concept in zip(source_concepts, target_concepts):
+                    casteer_concept_transforms = defaultdict(lambda: defaultdict(list))
+                    for num_steer in source_concept:
+                        for place_in_unet in source_concept[num_steer]:
+                            for block_idx in range(len(source_concept[num_steer][place_in_unet])):
+                                source_vector = source_concept[num_steer][place_in_unet][block_idx]
+                                if target_concept is not None:
+                                    target_vector = target_concept[num_steer][place_in_unet][block_idx]
+                                else:
+                                    target_vector = torch.zeros_like(source_vector)
+                                steering_vector = source_vector - target_vector
+
+                                if len(steering_vector.shape) == 1:
+                                    steering_vector = steering_vector.unsqueeze(0)
+                                steering_vector = convert_to_widest_dtype(steering_vector, device=self.device).unsqueeze(-1)
+                                
+                                res = self.strength * (steering_vector @ torch.linalg.pinv(steering_vector))
+                                P = torch.eye(res.shape[1], dtype=res.dtype, device=self.device).unsqueeze(0) - res
+                                
+                                casteer_concept_transforms[num_steer][place_in_unet].append((steering_vector.squeeze(-1), P))
+                    self.casteer_vectors.append(casteer_concept_transforms)
         else:
             raise ValueError(f'Unknown steer_type = {steer_type}')
 
@@ -181,21 +231,34 @@ class CrossAttentionOutputSteering(VectorControl):
         sequence_length = vector.shape[1]
         num_heads = vector.shape[2]
         hidden_dim = vector.shape[3]
-        (b,_) = steering_tensors
-
-        b_norm = b / torch.linalg.norm(b, dim=-1, keepdim=True)
-
         vector_reshaped = convert_to_widest_dtype(vector, device=self.device).reshape(-1, num_heads, hidden_dim).transpose(0, 1)
-        b_norm_reshaped = b_norm.unsqueeze(-1)
+        if self.attribute == 'race':
+            b_list = list(steering_tensors)
+            projection_scores_races = []
+            b_norms_races = []
+            for b in b_list:
+                b_norm = b / torch.linalg.norm(b, dim=-1, keepdim=True)
+                b_norms_races += [b_norm]
+                projection_scores = (
+                    (
+                        vector_reshaped
+                    ) @ b_norm.unsqueeze(-1)
+                ).transpose(0, 1).reshape(batch_size, -1, num_heads, 1)
+                projection_scores_races += [projection_scores]
+        else:
+            (b,_) = steering_tensors
+            b_norm_reshaped = b_norm.unsqueeze(-1)
+            # computing dot products between vector components and steering vector x
+            projection_scores = (
+                (
+                    vector_reshaped
+                ) @ b_norm_reshaped
+            ).transpose(0, 1).reshape(batch_size, -1, num_heads, 1)
         
-        # computing dot products between vector components and steering vector x
-        projection_scores = (
-            (
-                vector_reshaped
-            ) @ b_norm_reshaped
-        ).transpose(0, 1).reshape(batch_size, -1, num_heads, 1)
+        
 
         if save_vectors:
+            assert self.attribute is None, "this is meant only for computing thresholds!"
             payload = {
                 "scores": projection_scores.detach().cpu(),
                 "diffusion_step": diffusion_step,
@@ -208,21 +271,22 @@ class CrossAttentionOutputSteering(VectorControl):
             with open(os.path.join(save_vectors_path, f"projection_scores_{self.counter}.pkl"), "wb") as h:
                 pickle.dump(payload, h)
             self.counter += 1
-
-        # we will steer back only if dot product is positive, i.e.
-        # if there's positive amount of information from steering vector in the vector
-        if self.intermediate_clipping:
-            projection_scores = torch.where(projection_scores>0, projection_scores, 0)
-
         
         # now, let's use the threshold for this particular block
         if self.llm:
             # perform debiasing through the llm -- to be implemented
             pass
-        elif self.attribute is not None:
+        elif self.attribute == 'gender':
             # perform debiasing here
             max_thr = self.thr[(diffusion_step, place_in_unet, block_index)]['stats'] 
             min_thr = self.thr_low[(diffusion_step, place_in_unet, block_index)]['stats']
+        elif self.attribute == 'race':
+            max_thrs = [self.thr_white[(diffusion_step, place_in_unet, block_index)]['stats'] ,
+                        self.thr_black[(diffusion_step, place_in_unet, block_index)]['stats'] ,
+                        self.thr_latino[(diffusion_step, place_in_unet, block_index)]['stats'] ,
+                        self.thr_asian[(diffusion_step, place_in_unet, block_index)]['stats'] ,
+                        self.thr_indian[(diffusion_step, place_in_unet, block_index)]['stats'] 
+                    ]
         else:
             # so everything falls into [min_thr, max_thr], and debiasing is always done
             min_thr = 0
@@ -230,31 +294,66 @@ class CrossAttentionOutputSteering(VectorControl):
 
 
         if self.debias_type == 'discrete':
-            projection_scores_max = projection_scores.max()
-            projection_scores_min = projection_scores.min()
             if diffusion_step == 0 and place_in_unet == 'down' and block_index == 15:
-                print(projection_scores_min.item(), projection_scores_max.item(), max_thr, min_thr)
-                if (projection_scores_max < max_thr) and (projection_scores_min > min_thr):
-                    self.debias = True
+                if self.attribute == 'gender':
+                    projection_scores_max = projection_scores.max()
+                    projection_scores_min = projection_scores.min()
+                    print(projection_scores_min.item(), projection_scores_max.item(), max_thr, min_thr)
+                    if (projection_scores_max < max_thr) and (projection_scores_min > min_thr):
+                        self.debias = True
+                elif self.attribute == 'race':
+                    for race_counter, projection_scores_race  in enumerate(projection_scores_races):
+                        projection_scores_race_max = projection_scores_race.max()
+                        print(projection_scores_race_max.item(), max_thrs[race_counter])
+                        if (projection_scores_race_max < max_thrs[race_counter]):
+                            self.debias = True
+                            # store counter only for debiasing
+                            self.debias_race_counter = race_counter
+
+                            # break
 
         else:
             self.debias = True
             
         if self.debias:
-            logger.info(f"Debiasing using the thresholds: min {min_thr}, max {max_thr} and toss: {coin}")
-            steering_delta = - 1* projection_scores.to(vector.device) * b_norm.to(vector.device)
-            vector_new = vector+steering_delta
-
-            if coin:
-                vector_new = vector_new + torch.abs(projection_scores.to(vector.device)) * b_norm.to(vector.device)
-            else:
-                vector_new = vector_new - torch.abs(projection_scores.to(vector.device)) * b_norm.to(vector.device)
+            if self.attribute == 'gender':
+                steering_delta = - 1* projection_scores.to(vector.device) * b_norm.to(vector.device)
+                vector_new = vector + steering_delta
+                if coin:
+                    vector_new = vector_new + torch.abs(projection_scores.to(vector.device)) * b_norm.to(vector.device)
+                else:
+                    vector_new = vector_new - torch.abs(projection_scores.to(vector.device)) * b_norm.to(vector.device)
+            elif self.attribute == 'race':
+                if self.debias_type == 'discrete':
+                    steering_delta = -1* projection_scores_races[self.debias_race_counter].to(vector.device) * b_norms_races[self.debias_race_counter].to(vector.device)
+                    vector_new = vector + steering_delta
+                    vector_new = vector_new + torch.abs(projection_scores_races[coin].to(vector.device)) * b_norms_races[coin].to(vector.device)
+                else:
+                    # here, let's do an iterative debiasing
+                    vector_new = None
+                    for race_idx, race in enumerate(self.races):
+                        # no steering back if the race is not present -- skip steering for negative delta?
+                        steering_delta = -1 * projection_scores_races[race_idx].to(vector.device) * b_norms_races[race_idx].to(vector.device)
+                        if vector_new is None:
+                            vector_new = vector + steering_delta
+                        else:
+                            vector_new = vector_new + steering_delta
+                    
+                    # now the uniform distribution
+                    if vector_new is None:
+                        vector_new = vector + torch.abs(projection_scores_races[coin].to(vector.device)) * b_norms_races[coin].to(vector.device)
+                    else:
+                        vector_new = vector_new + torch.abs(projection_scores_races[coin].to(vector.device)) * b_norms_races[coin].to(vector.device)
+                    
         else:
             vector_new = vector
 
         if self.debias_type != 'discrete':
-            vector_new = torch.where(projection_scores < max_thr, vector_new, vector)
-            vector_new = torch.where(projection_scores > min_thr, vector_new, vector)
+            if self.attribute == 'gender':
+                vector_new = torch.where(projection_scores < max_thr, vector_new, vector)
+                vector_new = torch.where(projection_scores > min_thr, vector_new, vector)
+            elif self.attribute == 'race':
+                vector_new = torch.where(projection_scores_races[coin] < max_thrs[coin], vector_new, vector)
             
         return vector_new
     
@@ -282,15 +381,35 @@ class CrossAttentionOutputSteering(VectorControl):
         
         norm = torch.norm(vector, dim=-1, keepdim=True)
         for casteer_vectors in self.casteer_vectors:
-            vector[batch_slice, ...] = self.do_debias(vector[batch_slice, ...], 
-                                                *casteer_vectors[num_steer][place_in_unet][block_index], 
-                                                coin=self.coin, 
-                                                save_vectors=self.save_vectors,
-                                                save_vectors_path = self.save_vectors_path,
-                                                diffusion_step=diffusion_step,
-                                                place_in_unet=place_in_unet,
-                                                block_index=block_index
-                                            )
+
+            if self.attribute == 'race':
+                # improve it later
+                vecs_for_location = []
+                for cv in self.casteer_vectors.values():
+                    cv_dict = cv[0]
+                    entry = cv_dict[num_steer][place_in_unet][block_index]
+                    d = entry if torch.is_tensor(entry) else entry[0]
+                    vecs_for_location.append(d)
+
+                vector[batch_slice, ...] = self.do_debias(vector[batch_slice, ...], 
+                                                    *vecs_for_location, 
+                                                    coin=self.coin, 
+                                                    save_vectors=self.save_vectors,
+                                                    save_vectors_path = self.save_vectors_path,
+                                                    diffusion_step=diffusion_step,
+                                                    place_in_unet=place_in_unet,
+                                                    block_index=block_index
+                                                )
+            else:
+                vector[batch_slice, ...] = self.do_debias(vector[batch_slice, ...], 
+                                                    *casteer_vectors[num_steer][place_in_unet][block_index], 
+                                                    coin=self.coin, 
+                                                    save_vectors=self.save_vectors,
+                                                    save_vectors_path = self.save_vectors_path,
+                                                    diffusion_step=diffusion_step,
+                                                    place_in_unet=place_in_unet,
+                                                    block_index=block_index
+                                                )
             vector = self.renormalize(vector, norm)
 
         return vector.half()
