@@ -4,6 +4,7 @@ import math
 import typing as tp
 
 from diffusers import DiffusionPipeline
+from tqdm import tqdm
 
 from core.controller import CrossAttentionOutputSteering, DiffusionVectorControlMode, ModelToSteer, VectorControl
 from core.dataset import CocoDataset, TemplateDataset, dumb_tokenizer_fn
@@ -35,27 +36,31 @@ def hook_model(pipeline: DiffusionPipeline, device: tp.Any, args: argparse.Names
     if args.command == 'erase':
         source_concept = unpickle(args.concept_path)
         target_concept = mu_neutral
+    elif args.source_concept_path is not None:
+        source_concepts = [unpickle(args.source_concept_path)]
+        target_concepts = [unpickle(args.target_concept_path)]
     else:
-        source_concept = unpickle(args.source_concept_path)
-        target_concept = unpickle(args.target_concept_path)
+        source_concepts = None
+        target_concepts = None
 
     vector_control = CrossAttentionOutputSteering(
         model_to_steer=ModelToSteer.UNET,
         mode=args.control_mode,
         steer_type=args.steering_method,
-        target_concepts=[target_concept],
-        source_concepts=[source_concept],
+        target_concepts=target_concepts,
+        source_concepts=source_concepts,
         steer_only_up=False,
         steer_back=True,
         strength=args.steering_strength,
         device=device,
+        intermediate_clipping=args.intermediate_clipping,
         renormalize_after_steering=args.renormalize_after_steering,
         use_first_diffusion_step=not args.use_all_diffusion_steps,
         save_vectors = args.save_vectors,
         save_vectors_path = args.save_vectors_path,
         attribute=args.attribute,
-        model_name=args.model_name,
         debias_type=args.debias_type,
+        model_name=args.model_name,
     )
 
     # Register hooks on the appropriate model component
@@ -87,43 +92,76 @@ def main(args: argparse.Namespace):
 
     vector_control = hook_model(pipeline, device, args)
 
+    
     if args.generate_concept != 'coco':
         # we will generate a single prompt for the provided concept and create multiple image for that prompt
-        dataset = [f'a photo of a {args.generate_concept}']
+        # dataset = [f'a photo of a {args.generate_concept}']
+        dataset = [f'a photo of a {' '.join(args.generate_concept.split('_'))}']
         num_images_per_prompt = args.num_images_per_prompt
     else:
-        dataset = CocoDataset(
-            coco_path='exp/datasets/eval/coco/coco_30k.csv',
-            max_samples=args.max_samples,
-        )
+        import pandas as pd
+        data_csv = pd.read_csv('/home/t50045037/mmsteer/test_data/coco-30k.csv')
+        dataset = data_csv['prompt']
+        seeds = data_csv['evaluation_seed']
         num_images_per_prompt = 1
+    
+
+    
     skipped = generated = 0
+    print(f'Generating images for concept {dataset[0]} and method {args.steering_method} with strength {args.steering_strength}')
+    
+    if args.generate_concept != 'coco':
+        for prompt in tqdm(dataset):
+            num_batches = math.ceil(num_images_per_prompt / args.batch_size)
+            for batch_id in range(0, num_batches):
+                seed = args.seed + batch_id
+                num_images = min(args.batch_size, num_images_per_prompt - batch_id * args.batch_size)
 
-    print(f'Generating images for concept {args.generate_concept} and method {args.steering_method} with strength {args.steering_strength}')
-    for prompt in dataset:
-        num_batches = math.ceil(num_images_per_prompt / args.batch_size)
-        for batch_id in range(0, num_batches):
-            seed = args.seed + batch_id
-            num_images = min(args.batch_size, num_images_per_prompt - batch_id * args.batch_size)
+                output_paths = [f'{args.output_dir}/{prompt}/{seed}-{idx}.{EXTENSIONS[args.file_format]}' for idx in range(num_images)]
+                if all(os.path.exists(path) for path in output_paths):
+                    skipped += num_images
+                    continue
+                generated += num_images
+                images = run_image_model(
+                    model_type=args.model_name,
+                    pipe=pipeline,
+                    prompt=prompt,
+                    seed=seed,
+                    device=device,
+                    num_images=num_images,
+                )
+                if vector_control is not None:
+                    vector_control.reset()
+                os.makedirs(os.path.dirname(output_paths[0]), exist_ok=True)
+                for path, image in zip(output_paths, images):
+                    image.save(path, format=args.file_format, **SAVE_OPTIONS[args.file_format])
 
-            output_paths = [f'{args.output_dir}/{prompt}/{seed}-{idx}.{EXTENSIONS[args.file_format]}' for idx in range(num_images)]
+    else:
+        num_prompt = 0
+        for prompt in tqdm(dataset[0:]):
+            seed = int(seeds[num_prompt])
+            output_paths = [f'{args.output_dir}/{num_prompt}.{EXTENSIONS[args.file_format]}']
             if all(os.path.exists(path) for path in output_paths):
-                skipped += num_images
-                continue
-            generated += num_images
+                    num_prompt += 1
+                    skipped += 1
+                    continue
             images = run_image_model(
                 model_type=args.model_name,
                 pipe=pipeline,
                 prompt=prompt,
                 seed=seed,
                 device=device,
-                num_images=num_images,
+                num_images=1,
             )
             if vector_control is not None:
                 vector_control.reset()
             os.makedirs(os.path.dirname(output_paths[0]), exist_ok=True)
             for path, image in zip(output_paths, images):
                 image.save(path, format=args.file_format, **SAVE_OPTIONS[args.file_format])
+            num_prompt += 1
+            generated += 1
+        
+
 
     print(f'Skipped {skipped} images, generated {generated} images')
 
@@ -149,6 +187,7 @@ if __name__ == "__main__":
     main_parser.add_argument('--steering_strength', type=float, default=None)
     main_parser.add_argument('--control_mode', type=DiffusionVectorControlMode, choices=[str(x) for x in DiffusionVectorControlMode],
                         default='attn_output', help='Vector control mode for steering diffusion models')
+    main_parser.add_argument('--intermediate_clipping', action='store_true', help='Apply intermediate clipping like CASteer for leace and mean_matching')
     main_parser.add_argument('--renormalize_after_steering', action='store_true', help='Renormalize vectors after steering for leace and mean_matching')
     main_parser.add_argument('--use_all_diffusion_steps', action='store_true', help='Use all diffusion steps for leace and mean_matching')
 
@@ -161,9 +200,9 @@ if __name__ == "__main__":
 
     # Params for concept translation
     translate_parser = subparsers.add_parser('translate')
-    translate_parser.add_argument('--source_concept_path', type=str, required=True,
+    translate_parser.add_argument('--source_concept_path', type=str, required=False,
                                   help='Path to concept vectors which should be translated to the other concept')
-    translate_parser.add_argument('--target_concept_path', type=str, required=True,
+    translate_parser.add_argument('--target_concept_path', type=str, required=False,
                                   help='Path to concept vectors which should be the target for translation')
     
     translate_parser.add_argument('--save_vectors', action='store_true',
@@ -177,6 +216,7 @@ if __name__ == "__main__":
 
     translate_parser.add_argument('--debias_type', type=str,
                                   help='discrete or continuous')
+
 
 
     args = parser.parse_args()

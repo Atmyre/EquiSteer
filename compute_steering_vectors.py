@@ -45,11 +45,71 @@ def gather_stats_for_prompt_pairs(
         model_type=DiffusionModelType.from_model(args.model),
     )
 
+    # gender
+    if args.attribute == "gender_male":
+        prompts_pos = []
+        B = ['a boy', 'two men', 'two male people', 'a man', 'an old man', 'boys', 'men', 'group of male people', 'a male human']
+        C = ['', 'gloomy image', 'zoomed in', 'talking', 'on the street', 'in a strange pose', 'realism', \
+            'colorful background', 'on a beach', 'playing guitar', 'enjoying nature', 'smiling', 'in a futuristic spaceship', 'with kittens']
+        for b in B:
+            for c in C:
+                prompts_pos.append(b+' '+c)
+
+        prompts_neg = []
+        B = ['a girl', 'two women', 'two female people', 'a woman', 'an old woman', 'girls', 'women', 'group of female people', 'a female human']
+        C = ['', 'gloomy image', 'zoomed in', 'talking', 'on the street', 'in a strange pose', 'realism', \
+            'colorful background', 'on a beach', 'playing guitar', 'enjoying nature', 'smiling', 'in a futuristic spaceship', 'with kittens']
+        for b in B:
+            for c in C:
+                prompts_neg.append(b+' '+c)
+
+    elif args.attribute == "gender_female":
+        prompts_neg = []
+        B = ['a boy', 'two men', 'two male people', 'a man', 'an old man', 'boys', 'men', 'group of male people', 'a male human']
+        C = ['', 'gloomy image', 'zoomed in', 'talking', 'on the street', 'in a strange pose', 'realism', \
+            'colorful background', 'on a beach', 'playing guitar', 'enjoying nature', 'smiling', 'in a futuristic spaceship', 'with kittens']
+        for b in B:
+            for c in C:
+                prompts_neg.append(b+' '+c)
+
+        prompts_pos = []
+        B = ['a girl', 'two women', 'two female people', 'a woman', 'an old woman', 'girls', 'women', 'group of female people', 'a female human']
+        C = ['', 'gloomy image', 'zoomed in', 'talking', 'on the street', 'in a strange pose', 'realism', \
+            'colorful background', 'on a beach', 'playing guitar', 'enjoying nature', 'smiling', 'in a futuristic spaceship', 'with kittens']
+        for b in B:
+            for c in C:
+                prompts_pos.append(b+' '+c)
+    
+    elif args.attribute == "race":
+        # race 
+        B = ['a girl', 'a boy', 'two men', 'two women', 'two people', 'a man', 'a woman', 'an old man', 'an old woman', 'boys', 'girls', 'men', 'women', 'group of people', 'a human']
+        C = ['', 'gloomy image', 'zoomed in', 'talking', 'on the street', 'in a strange pose', 'realism', \
+            'colorful background', 'on a beach', 'playing guitar', 'enjoying nature', 'smiling', 'in a futuristic spaceship', 'with kittens']
+        prompts_pos = []
+        prompts_neg = []
+        for b in B:
+            for c in C:
+                prompts_pos.append(b+f' of {args.concept_pos} race '+c)
+                prompts_neg.append(b+' '+c)
+    elif args.attribute == "eyeglasses":
+        # glasses
+        B = ['a girl', 'a boy', 'two men', 'two women', 'two people', 'a man', 'a woman', 'an old man', 'an old woman', 'boys', 'girls', 'men', 'women', 'group of people', 'a human']
+        C = ['', 'gloomy image', 'zoomed in', 'talking', 'on the street', 'in a strange pose', 'realism', \
+            'colorful background', 'on a beach', 'playing guitar', 'enjoying nature', 'smiling', 'in a futuristic spaceship', 'with kittens']
+        prompts_pos = []
+        prompts_neg = []
+        for b in B:
+            for c in C:
+                prompts_pos.append(b+f' wearing {args.concept_pos} '+c)
+                prompts_neg.append(b+f' '+c)
+    
+
     print("Gathering statistics for concept prompts...")
     for idx, (pos_prompt, neg_prompt) in tqdm.tqdm(
             enumerate(zip(prompts_pos, prompts_neg)),
             total=min(len(prompts_pos), len(prompts_neg))
     ):
+        print(pos_prompt, neg_prompt)
         if idx in checkpoint_steps:
             write_checkpoint(
                 output_dir=args.output_dir,
@@ -165,6 +225,7 @@ def main():
                         help="If --mode is set to 'file', path to the text file containing negative prompts")
     parser.add_argument('--concept_pos', type=str, default="anime")
     parser.add_argument('--concept_neg', type=str, default=None)
+    parser.add_argument('--attribute', type=str, choices=['gender_male', 'gender_female', 'race', 'eyeglasses'], default="gender_male")
     parser.add_argument('--patch_average', action='store_true', help='Average across patches for each prompt before updating statistics')
     parser.add_argument('--normalize_vectors', action='store_true', help='Whether to normalize vectors before computing the statistics')
     parser.add_argument('--output_dir', type=str, default=None, required=True, help='path to saving steering vectors')
