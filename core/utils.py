@@ -48,7 +48,7 @@ def get_device() -> torch.device:
         return torch.device('mps')
     return torch.device('cpu')
 
-SUPPORTED_DIFFUSION_MODELS = ['sd14', 'sd21', 'sd21-turbo', 'sdxl', 'sdxl-turbo', 'flux', 'flux-schnell', 'sana', 'sana15', 'sana-sprint', 'pixart', 'pixart-alpha', 'flash-pixart', 'sana-06', 'sana-sprint-06']
+SUPPORTED_DIFFUSION_MODELS = ['sd14', 'sd15', 'sd21', 'sd21-turbo', 'sdxl', 'sdxl-turbo', 'flux', 'flux-schnell', 'sana', 'sana15', 'sana-sprint', 'pixart', 'pixart-alpha', 'flash-pixart', 'sana-06', 'sana-sprint-06']
 def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
     if model == 'sd14':
         pipe = StableDiffusionPipeline.from_pretrained(
@@ -58,18 +58,26 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
             device_map='balanced',
             safety_checker=None,
         )
+    elif model == 'sd15':
+        pipe = StableDiffusionPipeline.from_pretrained(
+            "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            # torch_dtype=torch.float16, 
+            cache_dir='./cache',
+            device_map='balanced',
+            safety_checker=None,
+        )
     elif model == 'sd21':
         pipe = StableDiffusionPipeline.from_pretrained(
             "stabilityai/stable-diffusion-2-1",
-            torch_dtype=torch.float16, 
+            # torch_dtype=torch.float16, 
             cache_dir='./cache',
             device_map='balanced',
         )
     elif model == 'sd21-turbo':
         pipe = AutoPipelineForText2Image.from_pretrained(
             "stabilityai/sd-turbo", 
-            torch_dtype=torch.float16, 
-            variant="fp16",
+            # torch_dtype=torch.float16, 
+            # variant="fp16",
             cache_dir='./cache',
             device_map='balanced',
         )
@@ -209,7 +217,7 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
 
 
 def get_num_denoising_steps(model: str) -> int:
-    if model in ('sd14', 'sd21'):
+    if model in ('sd14', 'sd15', 'sd21'):
         return 50
     elif model in ('sd21-turbo', 'sdxl-turbo'):
         return 1
@@ -228,7 +236,7 @@ def get_num_denoising_steps(model: str) -> int:
 
 
 def run_image_model(model_type: str, pipe, prompt: str, seed: int, device: torch.device, num_images: int = 1):
-    if model_type in ['sd14', 'sd21', 'sdxl']:
+    if model_type in ['sd14', 'sd15', 'sd21', 'sdxl']:
         images = pipe(prompt=prompt,
                      num_inference_steps=get_num_denoising_steps(model_type),
                      generator=torch.Generator(device=device).manual_seed(seed),

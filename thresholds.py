@@ -15,8 +15,8 @@ def main(args):
     keys = ["diffusion_step", "place_in_unet", "block_index"]
 
     for concept in concepts:
-        f1 = os.path.join(prefix, f'{concept}_{model}') # concept
-        f2 = os.path.join(prefix, f'{args.subgroup}_{concept}_{model}') # male/female concept
+        f1 = os.path.join(prefix, f'{args.subgroup}/{concept}') # concept
+        f2 = os.path.join(prefix, f'{args.subgroup}/pos_{concept}') # male/female concept
         f1_files = sorted(os.listdir(f1))
         f2_files = sorted(os.listdir(f2))
 
@@ -32,9 +32,8 @@ def main(args):
 
             if (obj1[keys[0]], obj1[keys[1]], obj1[keys[2]]) not in tracker.keys():
                 tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])] = {}
-                if 'max' not in tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])].keys():
+                if 'stats' not in tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])].keys():
                     tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats'] = []
-                    # tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['std'] = []
 
             if args.statistics == "min":
                 tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats'] += [[obj1['scores'].min(), obj2['scores'].min()]]
@@ -46,11 +45,18 @@ def main(args):
     for k,v in tracker.items():
         final_concept_stats = np.array(v['stats'])[:, 0]
         final_male_stats = np.array(v['stats'])[:, 1]
-        final_thresholds[k]['stats'] = (final_male_stats.mean() + final_concept_stats.mean()) / 2
+        mean_stat = (final_male_stats.mean() + final_concept_stats.mean()) / 2
+        final_thresholds[k]['stats'] = mean_stat
+        
+        # if k[0] == 0:
+        #     print(k)
+        #     print(np.min(final_male_stats), np.mean(final_male_stats), np.median(final_male_stats), np.max(final_male_stats))
+        #     print(np.min(final_concept_stats), np.mean(final_concept_stats), np.median(final_concept_stats), np.max(final_concept_stats))
+        #     print(mean_stat)
 
     os.makedirs(output_path, exist_ok=True)
 
-    with open(os.path.join(output_path, f'{args.attribute}_{model}.pkl'), 'wb') as handle:
+    with open(os.path.join(output_path, f'{args.attribute}_{args.subgroup}_{model}.pkl'), 'wb') as handle:
         pickle.dump(final_thresholds, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__=="__main__":

@@ -126,4 +126,8 @@ if [ "$attribute" == "glasses" ]; then
             --attribute glasses --debias_type discrete 
         done
     done
+<<<<<<< Updated upstream
 fi  
+=======
+fi  
+>>>>>>> Stashed changes
