@@ -59,7 +59,9 @@ def hook_model(pipeline: DiffusionPipeline, device: tp.Any, args: argparse.Names
         save_vectors = args.save_vectors,
         save_vectors_path = args.save_vectors_path,
         attribute=args.attribute,
-        debias_type=args.debias_type,
+        do_debias=args.do_debias,
+        do_erase=args.do_erase,
+        do_threshold=args.do_threshold,
         model_name=args.model_name,
     )
 
