@@ -104,7 +104,10 @@ class CrossAttentionOutputSteering(VectorControl):
         save_vectors_path: str = None,
         attribute: str = None,
         llm: bool = False, # for llm based decision for debiasing -- independent of threshold
-        debias_type: str = 'discrete',
+        do_debias=True,
+        do_erase=True,
+        do_threshold=True,
+        # debias_type: str = 'discrete',
         model_name: str = 'sd15',
     ):
         super().__init__(mode=mode, num_layers=num_layers)
@@ -124,13 +127,17 @@ class CrossAttentionOutputSteering(VectorControl):
         self.counter = 0 # for saving in forward call
         self.model_name = model_name
 
-        if self.attribute:
+        if do_debias:
             print('loading steering vectors for', self.attribute)
             source_concepts, target_concepts = self._flip_coin()
         self.casteer_vectors = self._generate_casteer_vectors(source_concepts, target_concepts)
         
+        self.do_debias = do_debias
+        self.do_erase = do_erase
+        self.do_threshold = do_threshold
+        
         self.debias = False
-        self.debias_type = debias_type
+        # self.debias_type = debias_type
         
         if self.strength < 0:
             raise ValueError('Negative values of strength are not supported')
@@ -242,7 +249,7 @@ class CrossAttentionOutputSteering(VectorControl):
     def _convert_type(self, vector: torch.Tensor):
         return convert_to_widest_dtype(vector, device=self.device, force_double=False)
 
-    def do_debias(self, vector: torch.Tensor, 
+    def debiasing(self, vector: torch.Tensor, 
                 steering_tensors: Any, 
                 save_vectors=False, 
                 save_vectors_path=None,
@@ -292,7 +299,7 @@ class CrossAttentionOutputSteering(VectorControl):
         if self.llm:
             # perform debiasing through the llm -- to be implemented
             pass
-        elif self.attribute is not None:
+        elif self.do_debias and self.do_threshold:
             # perform debiasing here
             thrs = [x[(diffusion_step, place_in_unet, block_index)]['stats'] for x in self.thr]
         else:
@@ -300,13 +307,13 @@ class CrossAttentionOutputSteering(VectorControl):
             thrs = [0]*len(projection_scores)
 
 
-        if self.debias_type in ['discrete', 'continious']:
+        if self.do_debias and self.do_threshold:
             if self.model_name in ['sd15', 'sd21']:
                 needed_block_idx = 4
             elif self.model_name in ['sdxl']:
-                needed_block_idx = 15
+                needed_block_idx = 17
             elif self.model_name in ['sana15']:
-                needed_block_idx = 1
+                needed_block_idx = 5
 
             condition_sd = (self.model_name in ['sd15', 'sd21', 'sdxl'] and diffusion_step == 0 and place_in_unet == 'down' and block_index == needed_block_idx)
             condition_sana = (self.model_name in ['sana15'] and diffusion_step == 0 and block_index == needed_block_idx)
@@ -316,10 +323,10 @@ class CrossAttentionOutputSteering(VectorControl):
                 for thr, projection_score in zip(thrs, projection_scores):
                     projection_scores_max = projection_score.max()
                     print(self.coin, projection_scores_max.item(), thr)
-                    if (projection_scores_max > thr and self.debias_type == 'discrete'):
+                    if (projection_scores_max > thr):
                         self.debias = False
                 print('------------------', self.debias)
-        elif self.debias_type in ['multiplier']:
+        elif self.do_debias:
             self.debias = True
         else:
             self.debias = False
@@ -332,7 +339,7 @@ class CrossAttentionOutputSteering(VectorControl):
         }
             
         if self.debias and diffusion_step < diffusion_step_max[self.model_name]:
-            if self.debias_type not in ['multiplier']:
+            if self.do_erase:
                 b_norm_prevs = []
                 for b_norm in b_norms:
 
@@ -357,10 +364,11 @@ class CrossAttentionOutputSteering(VectorControl):
 
                     b_norm_prevs.append(b_norm_to_subtract)
 
-            if self.debias_type in ['multiplier']:
-                multiplier = 0.5
-            else:
-                multiplier = 1.0
+            multiplier = 1.0
+            # if self.do_erase: 
+            #     multiplier = 1.0
+            # else:
+            #     multiplier = 0.5
             if self.attribute == 'race':
                 if self.coin < 0.2:
                     vector = vector + multiplier*thrs[0]*b_norms[0]
@@ -372,16 +380,18 @@ class CrossAttentionOutputSteering(VectorControl):
                     vector = vector + multiplier*thrs[3]*b_norms[3]
                 else:
                     vector = vector + multiplier*thrs[4]*b_norms[4]
-            elif self.attribute in ['gender']:
+            elif self.attribute == 'gender':
                 if self.coin < 0.5:
                     vector = vector + multiplier*thrs[0]*b_norms[0]
                 else:
                     vector = vector + multiplier*thrs[1]*b_norms[1]
-            elif self.attribute in ['glasses']:
-                if self.coin < 0.5:
-                    vector = vector + multiplier*thrs[0]*b_norms[0]
-                else:
-                    vector = vector+steering_delta
+            # elif self.attribute in ['glasses']:
+            #     if self.coin < 0.5:
+            #         vector = vector + multiplier*thrs[0]*b_norms[0]
+            #     else:
+            #         if self.do_erase:
+            #             vector = vector+steering_delta
+                    # else:   
             
         return vector
     
@@ -410,7 +420,7 @@ class CrossAttentionOutputSteering(VectorControl):
         norm = torch.norm(vector, dim=-1, keepdim=True)
         # for casteer_vectors in self.casteer_vectors:
         steering_vectors = [casteer_vectors[num_steer][place_in_unet][block_index] for casteer_vectors in self.casteer_vectors]
-        vector[batch_slice, ...] = self.do_debias(vector[batch_slice, ...], 
+        vector[batch_slice, ...] = self.debiasing(vector[batch_slice, ...], 
                                             steering_vectors,
                                             save_vectors=self.save_vectors,
                                             save_vectors_path = self.save_vectors_path,

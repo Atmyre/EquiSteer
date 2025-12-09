@@ -214,9 +214,14 @@ if __name__ == "__main__":
     translate_parser.add_argument('--attribute', type=str,
                                   help='this is for reading the appropriate threshold')
 
-    translate_parser.add_argument('--debias_type', type=str,
-                                  help='discrete or continuous')
+    translate_parser.add_argument('--do_debias', type=str,
+                                  help='if do debiasing')
 
+    translate_parser.add_argument('--do_erase', type=str,
+                                  help='if do erasing when debiasing')
+
+    translate_parser.add_argument('--do_threshold', type=str,
+                                  help='if do thresholding when debiasing')
 
 
     args = parser.parse_args()
