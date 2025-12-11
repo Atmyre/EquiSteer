@@ -32,27 +32,44 @@ def main(args):
 
             if (obj1[keys[0]], obj1[keys[1]], obj1[keys[2]]) not in tracker.keys():
                 tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])] = {}
-                if 'stats' not in tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])].keys():
-                    tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats'] = []
+                if 'stats_max' not in tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])].keys():
+                    tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats_max'] = []
+                    tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['mean_stats'] = []
 
+            tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['mean_stats'] += [[obj1['scores'].mean(), obj2['scores'].mean()]]
             if args.statistics == "min":
-                tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats'] += [[obj1['scores'].min(), obj2['scores'].min()]]
+                tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats_max'] += [[obj1['scores'].min(), obj2['scores'].min()]]
             elif args.statistics == "max":
-                tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats'] += [[obj1['scores'].max(), obj2['scores'].max()]]
+                tracker[(obj1[keys[0]], obj1[keys[1]], obj1[keys[2]])]['stats_max'] += [[obj1['scores'].max(), obj2['scores'].max()]]
     
     # now aggregate for all concepts
     final_thresholds = copy.deepcopy(tracker)
     for k,v in tracker.items():
-        final_concept_stats = np.array(v['stats'])[:, 0]
-        final_male_stats = np.array(v['stats'])[:, 1]
+        final_concept_stats = np.array(v['stats_max'])[:, 0]
+        final_male_stats = np.array(v['stats_max'])[:, 1]
         mean_stat = (final_male_stats.mean() + final_concept_stats.mean()) / 2
         final_thresholds[k]['stats'] = mean_stat
+
+        final_thresholds[k]['mean_normal_max'] = np.mean(final_concept_stats) 
+        final_thresholds[k]['std_normal_max'] = np.std(final_concept_stats) 
+        final_thresholds[k]['mean_male_max'] = np.mean(final_male_stats) 
+        final_thresholds[k]['std_male_max'] = np.std(final_male_stats) 
+
+        final_concept_mean_stats = np.array(v['mean_stats'])[:, 0]
+        final_male_mean_stats = np.array(v['mean_stats'])[:, 1]
+
+        final_thresholds[k]['mean_normal'] = np.mean(final_concept_mean_stats) 
+        final_thresholds[k]['std_normal'] = np.std(final_concept_mean_stats) 
+        final_thresholds[k]['mean_male'] = np.mean(final_male_mean_stats) 
+        final_thresholds[k]['std_male'] = np.std(final_male_mean_stats) 
         
-        # if k[0] == 0:
-        #     print(k)
-        #     print(np.min(final_male_stats), np.mean(final_male_stats), np.median(final_male_stats), np.max(final_male_stats))
-        #     print(np.min(final_concept_stats), np.mean(final_concept_stats), np.median(final_concept_stats), np.max(final_concept_stats))
-        #     print(mean_stat)
+        if k[0] == 0:
+            print(k)
+            print(np.min(final_male_stats), np.mean(final_male_stats), np.std(final_male_stats), np.max(final_male_stats))
+            print(np.min(final_concept_stats), np.mean(final_concept_stats), np.std(final_concept_stats), np.max(final_concept_stats))
+            print(np.min(final_male_mean_stats), np.mean(final_male_mean_stats), np.std(final_male_mean_stats), np.max(final_male_mean_stats))
+            print(np.min(final_concept_mean_stats), np.mean(final_concept_mean_stats), np.std(final_concept_mean_stats), np.max(final_concept_mean_stats))
+            print(mean_stat)
 
     os.makedirs(output_path, exist_ok=True)
 

@@ -24,18 +24,15 @@ run_cmd="srun --gpus=1 -N1 --exclusive"
 export PYTHONPATH=.
 python=../miniconda3/bin/python
 
-models=("sana15")
+models=("sdxl")
 attribute="gender"
 
 if [ "$attribute" == "gender" ]; then
     for model in "${models[@]}"; do
         prefix=./vectors/"${model}"
 
-        if [ "$model" == "sdxl" ]; then
-            concepts=("councelor" "cleaner")
-        else
-            concepts=("councelor" "baker")
-        fi
+        # concepts=("attendant" "cashier" "teacher" "nurse" "assistant" "secretary" "receptionist" "clerk" "designer" "hairdresser" "writer" "housekeeper" "baker" "librarian" "tailor" "driver" "supervisor" "janitor" "cook" "laborer" "construction_worker" "developer" "carpenter" "manager" "lawyer" "farmer" "salesperson" "physician" "guard" "analyst" "mechanic" "sheriff" "CEO")
+        concepts=("person" "human")
 
         for gender in "male_female" "female_male"; do
             
@@ -48,7 +45,7 @@ if [ "$attribute" == "gender" ]; then
                 # concept
                 $run_cmd $python run_with_steering.py --model_name $model \
                     --generate_concept "$concept"  --num_images_per_prompt 10  --steering_method casteer \
-                    --steering_strength 1 --output_dir ./tmp_gender_sdxl30/${gender}/outputs_${model}_${concept}/ \
+                    --steering_strength 1 --output_dir ./tmp/${gender}/outputs_${model}_${concept}/ \
                     translate \
                     --source_concept_path ./steering_vectors/${model}_gender/${gender}/pos_means_126.pickle \
                     --target_concept_path ./steering_vectors/${model}_gender/${gender}/neg_means_126.pickle \
@@ -57,14 +54,20 @@ if [ "$attribute" == "gender" ]; then
                 # male concept
                 $run_cmd $python run_with_steering.py --model_name $model \
                     --generate_concept "${gender_to_generate}"  --num_images_per_prompt 10  --steering_method casteer \
-                    --steering_strength 1  --output_dir ./tmp_gender_sdxl30/${gender}/outputs_${model}_${gender}_${concept}/ \
+                    --steering_strength 1  --output_dir ./tmp/${gender}/outputs_${model}_${gender}_${concept}/ \
                     translate \
                     --source_concept_path ./steering_vectors/${model}_gender/${gender}/pos_means_126.pickle \
                     --target_concept_path ./steering_vectors/${model}_gender/${gender}/neg_means_126.pickle \
                     --save_vectors --save_vectors_path ${prefix}/${gender}/pos_${concept}/
 
+                # $run_cmd $python thresholds.py --prefix $prefix --model $model --concepts "${concept}" --attribute gender --subgroup $gender --statistics max --output_path ./thresholds/${concept}/${model}/${gender}/
+                # rm -rf ./tmp/${gender}/outputs_${model}_${concept}/
+                # rm -rf ./tmp/${gender}/outputs_${model}_${gender}_${concept}/
+                # rm -rf ${prefix}/${gender}/${concept}/
+                # rm -rf ${prefix}/${gender}/pos_${concept}/
+
             done
-            $run_cmd $python thresholds.py --prefix $prefix --model $model --concepts "${concepts[@]}" --attribute gender --subgroup $gender --statistics max --output_path ./thresholds_human/${model}/${gender}/
+            $run_cmd $python thresholds.py --prefix $prefix --model $model --concepts "${concepts[@]}" --attribute gender --subgroup $gender --statistics max --output_path ./thresholds/wtf_sdxl/${model}/${gender}/
         done
     done
 fi
@@ -100,10 +103,9 @@ if [ "$attribute" == "race" ]; then
     done
 fi
 
-if [ "$attribute" == "glasses" ]; then
+if [ "$attribute" == "eyeglasses" ]; then
     concepts=("man" "woman")
     attrs=("eyeglasses")
-    models=("sdxl")
     path="eyeglasses"
 
     for model in "${models[@]}"; do
@@ -115,8 +117,8 @@ if [ "$attribute" == "glasses" ]; then
                     --generate_concept "$concept"  --num_images_per_prompt 10  --steering_method casteer \
                     --steering_strength 1 --output_dir ./tmp_${path}/${attr}/outputs_${model}_${concept}/ \
                     translate \
-                    --source_concept_path ./steering_vectors/${model}_${path}/${attr}/pos_means_210.pickle,\
-                    --target_concept_path ./steering_vectors/${model}_${path}/${attr}/neg_means_210.pickle,\
+                    --source_concept_path ./steering_vectors/${model}_${path}_imgnt/${attr}/pos_means_50.pickle\
+                    --target_concept_path ./steering_vectors/${model}_${path}_imgnt/${attr}/neg_means_50.pickle\
                     --save_vectors --save_vectors_path ${prefix}/${attr}/${concept}/
 
                 # race concept
@@ -129,11 +131,11 @@ if [ "$attribute" == "glasses" ]; then
                     --generate_concept ${prompt_to_generate}  --num_images_per_prompt 10  --steering_method casteer \
                     --steering_strength 1  --output_dir ./tmp_${path}/${attr}/outputs_${model}_pos_${concept}/ \
                     translate \
-                    --source_concept_path ./steering_vectors/${model}_${path}/${attr}/pos_means_210.pickle,\
-                    --target_concept_path ./steering_vectors/${model}_${path}/${attr}/neg_means_210.pickle,\
+                    --source_concept_path ./steering_vectors/${model}_${path}_imgnt/${attr}/pos_means_50.pickle\
+                    --target_concept_path ./steering_vectors/${model}_${path}_imgnt/${attr}/neg_means_50.pickle\
                     --save_vectors --save_vectors_path ${prefix}/${attr}/pos_${concept}/
             done
-            $run_cmd $python thresholds.py --prefix $prefix --model $model --concepts "${concepts[@]}" --attribute concepts --subgroup ${attr} --statistics max --output_path ./thresholds_${path}/${model}/${attr}/
+            $run_cmd $python thresholds.py --prefix $prefix --model $model --concepts "${concepts[@]}" --attribute concepts --subgroup ${attr} --statistics max --output_path ./thresholds/${path}/${model}/${attr}_imgnt/
         done
     done
 fi
