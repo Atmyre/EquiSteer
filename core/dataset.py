@@ -1,4 +1,5 @@
 import json
+import os
 import typing as tp
 import glob
 import random
@@ -137,7 +138,7 @@ class RelaionDataset(QuestionsDataset):
                 cache_dir='./cache',
                 data_files=data_files,
                 columns=['caption'],  # Only load caption column
-                token='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',
+                token=os.environ.get('HF_TOKEN'),
             )
 
             pattern = re.compile(f'(^|[\\s.,-:;]){re.escape(concept.lower().strip())}($|[\\s.,-:;])', flags=re.IGNORECASE) if concept is not None else None

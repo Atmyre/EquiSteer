@@ -102,43 +102,123 @@ def gather_stats_for_prompt_pairs(
             for c in C:
                 prompts_pos.append(b+f' wearing {args.concept_pos} '+c)
                 prompts_neg.append(b+f' '+c)
+    elif args.attribute == "custom":
+        # Generic "subject + specifier + context" prompt builder.
+        # --concept_pos provides the specifier (e.g. "wearing a hijab",
+        # "in a wheelchair", "with visible tattoos"); the surrounding subject
+        # and context lists are reused.
+        B = ['a girl', 'a boy', 'two men', 'two women', 'two people', 'a man', 'a woman', 'an old man', 'an old woman', 'boys', 'girls', 'men', 'women', 'group of people', 'a human']
+        C = ['', 'gloomy image', 'zoomed in', 'talking', 'on the street', 'in a strange pose', 'realism', \
+            'colorful background', 'on a beach', 'playing guitar', 'enjoying nature', 'smiling', 'in a futuristic spaceship', 'with kittens']
+        prompts_pos = []
+        prompts_neg = []
+        for b in B:
+            for c in C:
+                prompts_pos.append(f'{b} {args.concept_pos} {c}')
+                prompts_neg.append(f'{b} {c}')
+    elif args.attribute == "custom_identity":
+        # Identity-prefix prompts: "a {identity} {subject}" instead of
+        # "a {subject} wearing a {marker}". Compares whether the gate fires on
+        # an attribute named purely by an identity word (e.g. "a muslim man")
+        # vs by a visible marker (e.g. "a man wearing a hijab").
+        B = ['a girl', 'a boy', 'two men', 'two women', 'two people', 'a man', 'a woman', 'an old man', 'an old woman', 'boys', 'girls', 'men', 'women', 'group of people', 'a human']
+        C = ['', 'gloomy image', 'zoomed in', 'talking', 'on the street', 'in a strange pose', 'realism', \
+            'colorful background', 'on a beach', 'playing guitar', 'enjoying nature', 'smiling', 'in a futuristic spaceship', 'with kittens']
+        identity = args.concept_pos.strip()
+
+        def _inject_identity(subj: str, ident: str) -> str:
+            parts = subj.split()
+            if parts[0] in ('a', 'an', 'the'):
+                return f"{parts[0]} {ident} {' '.join(parts[1:])}"
+            if parts[0] == 'group' and len(parts) > 2 and parts[1] == 'of':
+                return f"group of {ident} {' '.join(parts[2:])}"
+            if parts[0] in ('two', 'three'):
+                return f"{parts[0]} {ident} {' '.join(parts[1:])}"
+            return f"{ident} {subj}"
+
+        prompts_pos = []
+        prompts_neg = []
+        for b in B:
+            for c in C:
+                prompts_pos.append(f'{_inject_identity(b, identity)} {c}')
+                prompts_neg.append(f'{b} {c}')
+    elif args.attribute == "age":
+        # age: drop 'old man'/'old woman' subjects since they bake in age
+        B = ['a girl', 'a boy', 'two men', 'two women', 'two people', 'a man', 'a woman', 'boys', 'girls', 'men', 'women', 'group of people', 'a human', 'a person', 'people']
+        C = ['', 'gloomy image', 'zoomed in', 'talking', 'on the street', 'in a strange pose', 'realism', \
+            'colorful background', 'on a beach', 'playing guitar', 'enjoying nature', 'smiling', 'in a futuristic spaceship', 'with kittens']
+        # concept_pos in {young, middle-aged, elderly} -- use natural age phrasing
+        age_phrase = args.concept_pos.replace('_', '-')
+        prompts_pos = []
+        prompts_neg = []
+        for b in B:
+            for c in C:
+                prompts_pos.append(b+f' who is {age_phrase} '+c)
+                prompts_neg.append(b+f' '+c)
     
 
-    print("Gathering statistics for concept prompts...")
-    for idx, (pos_prompt, neg_prompt) in tqdm.tqdm(
-            enumerate(zip(prompts_pos, prompts_neg)),
-            total=min(len(prompts_pos), len(prompts_neg))
-    ):
-        print(pos_prompt, neg_prompt)
+    print("Gathering statistics for concept prompts...", flush=True)
+    import gc as _gc
+    import time as _time
+    import traceback as _tb
+
+    def _gpu_mem():
+        if torch.cuda.is_available():
+            return f"{torch.cuda.memory_allocated()/1e9:.2f}G alloc / {torch.cuda.memory_reserved()/1e9:.2f}G reserved"
+        return "n/a"
+
+    for idx, (pos_prompt, neg_prompt) in enumerate(zip(prompts_pos, prompts_neg)):
+        t0 = _time.time()
+        print(f"[iter {idx}] pos='{pos_prompt}'  neg='{neg_prompt}'  gpu={_gpu_mem()}", flush=True)
         if idx in checkpoint_steps:
-            write_checkpoint(
-                output_dir=args.output_dir,
-                step=idx,
-                pos_handler=pos_stats_handler,
-                neg_handler=neg_stats_handler,
-            )
+            print(f"[iter {idx}] checkpoint", flush=True)
+            try:
+                write_checkpoint(
+                    output_dir=args.output_dir,
+                    step=idx,
+                    pos_handler=pos_stats_handler,
+                    neg_handler=neg_stats_handler,
+                )
+            except Exception:
+                print(f"[iter {idx}] checkpoint failed:\n{_tb.format_exc()}", flush=True)
 
-        pos_stats_handler.active = True
-        neg_stats_handler.active = False
-        image = run_image_model(
-            model_type=args.model,
-            pipe=pipe,
-            prompt=pos_prompt,
-            seed=0,
-            device=device,
-        )[0]
-        pos_stats_handler.reset()
+        try:
+            pos_stats_handler.active = True
+            neg_stats_handler.active = False
+            image = run_image_model(
+                model_type=args.model,
+                pipe=pipe,
+                prompt=pos_prompt,
+                seed=0,
+                device=device,
+            )[0]
+            pos_stats_handler.reset()
 
-        pos_stats_handler.active = False
-        neg_stats_handler.active = True
-        image = run_image_model(
-            model_type=args.model,
-            pipe=pipe,
-            prompt=neg_prompt,
-            seed=0,
-            device=device,
-        )[0]
-        neg_stats_handler.reset()
+            pos_stats_handler.active = False
+            neg_stats_handler.active = True
+            image = run_image_model(
+                model_type=args.model,
+                pipe=pipe,
+                prompt=neg_prompt,
+                seed=0,
+                device=device,
+            )[0]
+            neg_stats_handler.reset()
+        except Exception:
+            print(f"[iter {idx}] generation failed:\n{_tb.format_exc()}", flush=True)
+            # Try to free anything we can
+            _gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            continue
+
+        # Periodic memory hygiene
+        if idx % 10 == 0:
+            _gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        print(f"[iter {idx}] done in {_time.time()-t0:.2f}s  gpu={_gpu_mem()}", flush=True)
 
     write_checkpoint(
         output_dir=args.output_dir,
@@ -164,18 +244,24 @@ def write_checkpoint(
 
 def calculate_casteer(pos_means: dict, neg_means: dict) -> dict:
     result = {}
+    EPS = 1e-8
     for denoising_step in pos_means.keys():
         result[denoising_step] = {}
         for place_in_unet in pos_means[denoising_step].keys():
             result[denoising_step][place_in_unet] = []
             for block_idx in range(len(pos_means[denoising_step][place_in_unet])):
-                print(f'Processing step={denoising_step}, block={place_in_unet}, layer={block_idx}')
-                steering_vector = (
-                    pos_means[denoising_step][place_in_unet][block_idx] -
-                    neg_means[denoising_step][place_in_unet][block_idx]
-                )
-                steering_vector /= torch.linalg.norm(steering_vector, dim=1, keepdim=True)
-                result[denoising_step][place_in_unet].append(steering_vector.to(torch.float32).detach().cpu().numpy())
+                print(f'Processing step={denoising_step}, block={place_in_unet}, layer={block_idx}', flush=True)
+                pos = pos_means[denoising_step][place_in_unet][block_idx]
+                neg = neg_means[denoising_step][place_in_unet][block_idx]
+                # promote to float32 on CPU before subtraction so a stray NaN/Inf
+                # in the GPU-side fp16 accumulators doesn't poison subsequent ops
+                pos = pos.detach().to(torch.float32).cpu()
+                neg = neg.detach().to(torch.float32).cpu()
+                steering_vector = pos - neg
+                norm = torch.linalg.norm(steering_vector, dim=1, keepdim=True)
+                steering_vector = steering_vector / (norm + EPS)
+                steering_vector = torch.nan_to_num(steering_vector, nan=0.0, posinf=0.0, neginf=0.0)
+                result[denoising_step][place_in_unet].append(steering_vector.numpy())
     return result
 
 
@@ -186,31 +272,31 @@ def run(args: argparse.Namespace):
     device = get_device()
 
 
-    if args.mode == 'concrete':
-        prompts_pos, prompts_neg = get_prompts_concrete(concept_pos=args.concept_pos, 
-                                                        concept_neg=args.concept_neg)
-    elif args.mode == 'human-related':
-        prompts_pos, prompts_neg = get_prompts_human_related(concept_pos=args.concept_pos, 
-                                                            concept_neg=args.concept_neg)
-    elif args.mode == 'style':
-        prompts_pos, prompts_neg = get_prompts_style(concept_pos=args.concept_pos, 
-                                                    concept_neg=args.concept_neg)
-    elif args.mode == 'file':
-        prompts_pos = read_prompt_file(args.prompts_pos_file)
-        prompts_neg = read_prompt_file(args.prompts_neg_file)
+    # if args.mode == 'concrete':
+    #     prompts_pos, prompts_neg = get_prompts_concrete(concept_pos=args.concept_pos, 
+    #                                                     concept_neg=args.concept_neg)
+    # elif args.mode == 'human-related':
+    #     prompts_pos, prompts_neg = get_prompts_human_related(concept_pos=args.concept_pos, 
+    #                                                         concept_neg=args.concept_neg)
+    # elif args.mode == 'style':
+    #     prompts_pos, prompts_neg = get_prompts_style(concept_pos=args.concept_pos, 
+    #                                                 concept_neg=args.concept_neg)
+    # elif args.mode == 'file':
+    #     prompts_pos = read_prompt_file(args.prompts_pos_file)
+    #     prompts_neg = read_prompt_file(args.prompts_neg_file)
 
     os.makedirs(args.output_dir, exist_ok=True)
     checkpoint_steps = set(map(int, args.checkpoint_steps.split(',')))
 
-    assert prompts_pos is not None and prompts_neg is not None, "both positive and negative prompts must be provided"
+    # assert prompts_pos is not None and prompts_neg is not None, "both positive and negative prompts must be provided"
 
     gather_stats_for_prompt_pairs(
         pipe=pipe,
         args=args,
         checkpoint_steps=checkpoint_steps,
         device=device,
-        prompts_pos=prompts_pos,
-        prompts_neg=prompts_neg,
+        prompts_pos=None,
+        prompts_neg=None,
     )
 
 
@@ -225,7 +311,7 @@ def main():
                         help="If --mode is set to 'file', path to the text file containing negative prompts")
     parser.add_argument('--concept_pos', type=str, default="anime")
     parser.add_argument('--concept_neg', type=str, default=None)
-    parser.add_argument('--attribute', type=str, choices=['gender_male', 'gender_female', 'race', 'eyeglasses'], default="gender_male")
+    parser.add_argument('--attribute', type=str, choices=['gender_male', 'gender_female', 'race', 'eyeglasses', 'age', 'custom', 'custom_identity'], default="gender_male")
     parser.add_argument('--patch_average', action='store_true', help='Average across patches for each prompt before updating statistics')
     parser.add_argument('--normalize_vectors', action='store_true', help='Whether to normalize vectors before computing the statistics')
     parser.add_argument('--output_dir', type=str, default=None, required=True, help='path to saving steering vectors')

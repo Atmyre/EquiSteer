@@ -18,6 +18,27 @@ logger = logging.getLogger()
 
 EPS = 1e-6
 
+
+def _resolve_path(rel_path: str) -> str:
+    """Resolve a steering-vector / threshold path.
+
+    If env var FAIRSTEER_ROOT is set, look only under that root (no fallback —
+    explicit user choice). Otherwise try the default repo bases in order.
+    """
+    override = os.environ.get("FAIRSTEER_ROOT")
+    if override:
+        p = f"{override.rstrip('/')}/{rel_path}"
+        if not os.path.isfile(p):
+            raise FileNotFoundError(f"{p} (FAIRSTEER_ROOT set; no fallback)")
+        return p
+    for base in ("/data/home/acw685/CA_diffusion_debiasing-main",
+                 "/gpfs/scratch/acw685/CA_diffusion_debiasing-main"):
+        p = f"{base}/{rel_path}"
+        if os.path.isfile(p):
+            return p
+    raise FileNotFoundError(rel_path)
+
+
 class DiffusionVectorControlMode(enum.StrEnum):
     ATTN_OUTPUT = 'attn_output'
     ATTN_HEADS = 'attn_head'
@@ -107,6 +128,7 @@ class CrossAttentionOutputSteering(VectorControl):
         do_debias=True,
         do_erase=True,
         do_threshold=True,
+        gate_threshold_multiplier: float = 1.0,
         # debias_type: str = 'discrete',
         model_name: str = 'sd15',
     ):
@@ -126,17 +148,33 @@ class CrossAttentionOutputSteering(VectorControl):
         self.llm = llm
         self.counter = 0 # for saving in forward call
         self.model_name = model_name
+        # Multiplier applied to the gating threshold (Eq. 5 in the paper) only.
+        # Injection magnitude (Eq. 8) is left unchanged so that this knob isolates
+        # the sensitivity of the gate, not the steering strength.
+        self.gate_threshold_multiplier = float(gate_threshold_multiplier)
 
-        if do_debias:
+        print("ATTRIBUTE", self.attribute)
+        if self.attribute in ['race', 'gender', 'glasses', 'age', 'body']:
+            print("Doing debiasing")
+            self.do_debias = True
+            self.do_erase = True
+            self.do_threshold = True
+        else:
+            self.do_debias = False
+            self.do_erase = False
+            self.do_threshold = False
+
+        print(self.do_debias)
+        if self.do_debias:
             print('loading steering vectors for', self.attribute)
             source_concepts, target_concepts = self._flip_coin()
         self.casteer_vectors = self._generate_casteer_vectors(source_concepts, target_concepts)
         
-        self.do_debias = do_debias
-        self.do_erase = do_erase
-        self.do_threshold = do_threshold
+        # self.do_debias = do_debias
+        # self.do_erase = do_erase
+        # self.do_threshold = do_threshold
         
-        self.debias = False
+        # self.debias = False
         # self.debias_type = debias_type
         
         if self.strength < 0:
@@ -173,37 +211,45 @@ class CrossAttentionOutputSteering(VectorControl):
         self.steering_vectors = []
         source_concepts = []
         target_concepts = []
-        for race_to in ['white', 'black', 'asian', 'indian', 'latino']:
-            steering_vectors = unpickle(f'/home/t50045037/CA_diffusion_debiasing_local/steering_vectors/{self.model_name}_race/{race_to}/pos_means_210.pickle')
-            source_concepts.append(steering_vectors)
-            steering_vectors = unpickle(f'/home/t50045037/CA_diffusion_debiasing_local/steering_vectors/{self.model_name}_race/{race_to}/neg_means_210.pickle')
-            target_concepts.append(steering_vectors)
+        for race_to in ['White', 'Black', 'Asian', 'Indian', 'Latino']:
+            source_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/race/{race_to}/pos_means_210.pickle')))
+            target_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/race/{race_to}/neg_means_210.pickle')))
         return source_concepts, target_concepts
 
     def _load_steering_vectors_gender(self):
         self.steering_vectors = []
         source_concepts = []
         target_concepts = []
-
         for gender in ['male_female', 'female_male']:
-            steering_vectors = unpickle(f'/home/t50045037/CA_diffusion_debiasing_local/steering_vectors/{self.model_name}_gender/{gender}/pos_means_126.pickle')
-            source_concepts.append(steering_vectors)
-            steering_vectors = unpickle(f'/home/t50045037/CA_diffusion_debiasing_local/steering_vectors/{self.model_name}_gender/{gender}/neg_means_126.pickle')
-            target_concepts.append(steering_vectors)
+            source_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/gender/{gender}/pos_means_126.pickle')))
+            target_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/gender/{gender}/neg_means_126.pickle')))
+        return source_concepts, target_concepts
 
+    def _load_steering_vectors_age(self):
+        self.steering_vectors = []
+        source_concepts = []
+        target_concepts = []
+        for age_to in ['young', 'middle_aged', 'elderly']:
+            source_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/age/{age_to}/pos_means_210.pickle')))
+            target_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/age/{age_to}/neg_means_210.pickle')))
+        return source_concepts, target_concepts
+
+    def _load_steering_vectors_body(self):
+        self.steering_vectors = []
+        source_concepts = []
+        target_concepts = []
+        for body_to in ['slim', 'average', 'heavy']:
+            source_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/body/{body_to}/pos_means_210.pickle')))
+            target_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/body/{body_to}/neg_means_210.pickle')))
         return source_concepts, target_concepts
 
     def _load_steering_vectors_glasses(self):
         self.steering_vectors = []
         source_concepts = []
         target_concepts = []
-
         for gender in ['eyeglasses']:
-            steering_vectors = unpickle(f'/home/t50045037/CA_diffusion_debiasing_local/steering_vectors/{self.model_name}_eyeglasses/{gender}/pos_means_210.pickle')
-            source_concepts.append(steering_vectors)
-            steering_vectors = unpickle(f'/home/t50045037/CA_diffusion_debiasing_local/steering_vectors/{self.model_name}_eyeglasses/{gender}/neg_means_210.pickle')
-            target_concepts.append(steering_vectors)
-
+            source_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/{gender}/pos_means_210.pickle')))
+            target_concepts.append(unpickle(_resolve_path(f'steering_vectors/{self.model_name}/{gender}/neg_means_210.pickle')))
         return source_concepts, target_concepts
 
     def _load_steering_vectors(self, attribute: str):
@@ -213,6 +259,10 @@ class CrossAttentionOutputSteering(VectorControl):
             source_concepts, target_concepts = self._load_steering_vectors_gender()
         elif attribute == 'glasses':
             source_concepts, target_concepts = self._load_steering_vectors_glasses()
+        elif attribute == 'age':
+            source_concepts, target_concepts = self._load_steering_vectors_age()
+        elif attribute == 'body':
+            source_concepts, target_concepts = self._load_steering_vectors_body()
         else:
             raise ValueError(f'Invalid attribute: {attribute}')
 
@@ -220,21 +270,28 @@ class CrossAttentionOutputSteering(VectorControl):
 
     def _load_thresholds_races(self):
         self.thr = []
-        for race_to in ['white', 'black', 'asian', 'indian', 'latino']:
-            thr = unpickle(f'/home/t50045037/CA_diffusion_debiasing_local/thresholds/thresholds_race/{self.model_name}/{race_to}/race_{race_to}_{self.model_name}.pkl')
-            self.thr.append(thr)
+        for race_to in ['White', 'Black', 'Asian', 'Indian', 'Latino']:
+            self.thr.append(unpickle(_resolve_path(f'thresholds_race/{self.model_name}/{race_to}/race_{race_to}_{self.model_name}.pkl')))
 
     def _load_thresholds_gender(self):
         self.thr = []
         for gender in ['male_female', 'female_male']:
-            thr = unpickle(f'/home/t50045037/CA_diffusion_debiasing_local/thresholds/thresholds_gender/{self.model_name}/{gender}/gender_{gender}_{self.model_name}.pkl')
-            self.thr.append(thr)
+            self.thr.append(unpickle(_resolve_path(f'thresholds/wtf_sdxl/{self.model_name}/{gender}/gender_{gender}_{self.model_name}.pkl')))
+
+    def _load_thresholds_age(self):
+        self.thr = []
+        for age_to in ['young', 'middle_aged', 'elderly']:
+            self.thr.append(unpickle(_resolve_path(f'thresholds_age/{self.model_name}/{age_to}/age_{age_to}_{self.model_name}.pkl')))
+
+    def _load_thresholds_body(self):
+        self.thr = []
+        for body_to in ['slim', 'average', 'heavy']:
+            self.thr.append(unpickle(_resolve_path(f'thresholds_body/{self.model_name}/{body_to}/body_{body_to}_{self.model_name}.pkl')))
 
     def _load_thresholds_glasses(self):
         self.thr = []
         for gender in ['eyeglasses']:
-            thr = unpickle(f'/home/t50045037/CA_diffusion_debiasing_local/thresholds/thresholds_eyeglasses/{self.model_name}/{gender}/concepts_{gender}_{self.model_name}.pkl')
-            self.thr.append(thr)
+            self.thr.append(unpickle(_resolve_path(f'thresholds/eyeglasses/{self.model_name}/{gender}/concepts_{gender}_{self.model_name}.pkl')))
 
     def _load_thresholds(self, attribute: str):
         if attribute == 'race':
@@ -243,6 +300,10 @@ class CrossAttentionOutputSteering(VectorControl):
             self._load_thresholds_gender()
         elif attribute == 'glasses':
             self._load_thresholds_glasses()
+        elif attribute == 'age':
+            self._load_thresholds_age()
+        elif attribute == 'body':
+            self._load_thresholds_body()
         else:
             raise ValueError(f'Invalid attribute: {attribute}')
 
@@ -299,14 +360,25 @@ class CrossAttentionOutputSteering(VectorControl):
         if self.llm:
             # perform debiasing through the llm -- to be implemented
             pass
-        elif self.do_debias and self.do_threshold:
+        elif self.do_debias:
             # perform debiasing here
             thrs = [x[(diffusion_step, place_in_unet, block_index)]['stats'] for x in self.thr]
+            # FAIRSTEER_ADDBACK_FIELD env var controls which field of the threshold
+            # pickle is used for the add-back magnitude (paper Eq. 8 alpha).
+            # Default 'stats' = the gate threshold (legacy behaviour).
+            # Set to 'mean_male_max' for the proper Eq. 8 (mean of maximal dot
+            # products on attribute-specific prompts).
+            addback_field = os.environ.get('FAIRSTEER_ADDBACK_FIELD', 'stats')
+            if addback_field == 'stats':
+                thrs_to_add = thrs
+            else:
+                thrs_to_add = [x[(diffusion_step, place_in_unet, block_index)][addback_field] for x in self.thr]
         else:
             # so everything falls into [min_thr, max_thr], and debiasing is never done
             thrs = [0]*len(projection_scores)
 
 
+        print(self.do_debias, self.do_threshold, self.model_name, diffusion_step, block_index)
         if self.do_debias and self.do_threshold:
             if self.model_name in ['sd15', 'sd21']:
                 needed_block_idx = 4
@@ -322,8 +394,9 @@ class CrossAttentionOutputSteering(VectorControl):
                 self.debias = True
                 for thr, projection_score in zip(thrs, projection_scores):
                     projection_scores_max = projection_score.max()
-                    print(self.coin, projection_scores_max.item(), thr)
-                    if (projection_scores_max > thr):
+                    gate_thr = thr * self.gate_threshold_multiplier
+                    print(self.coin, projection_scores_max.item(), gate_thr, '(thr*mult)')
+                    if (projection_scores_max > gate_thr):
                         self.debias = False
                 print('------------------', self.debias)
         elif self.do_debias:
@@ -357,8 +430,6 @@ class CrossAttentionOutputSteering(VectorControl):
                         ) @ b_norm_reshaped
                     ).transpose(0, 1).reshape(batch_size, -1, num_heads, 1)
 
-                    # projection_score = torch.where(projection_score > 0, projection_score, 0.0)
-
                     steering_delta = - 1.0 * projection_score.to(vector.device) * b_norm_to_subtract.to(vector.device)
                     vector = vector+steering_delta
 
@@ -369,29 +440,44 @@ class CrossAttentionOutputSteering(VectorControl):
             #     multiplier = 1.0
             # else:
             #     multiplier = 0.5
+            # Use thrs_to_add (set by FAIRSTEER_ADDBACK_FIELD) consistently for all
+            # attributes' add-back magnitude. Falls back to thrs (gate threshold)
+            # when the env var is unset.
             if self.attribute == 'race':
                 if self.coin < 0.2:
-                    vector = vector + multiplier*thrs[0]*b_norms[0]
+                    vector = vector + multiplier*thrs_to_add[0]*b_norms[0]
                 elif self.coin < 0.4:
-                    vector = vector + multiplier*thrs[1]*b_norms[1]
+                    vector = vector + multiplier*thrs_to_add[1]*b_norms[1]
                 elif self.coin < 0.6:
-                    vector = vector + multiplier*thrs[2]*b_norms[2]
+                    vector = vector + multiplier*thrs_to_add[2]*b_norms[2]
                 elif self.coin < 0.8:
-                    vector = vector + multiplier*thrs[3]*b_norms[3]
+                    vector = vector + multiplier*thrs_to_add[3]*b_norms[3]
                 else:
-                    vector = vector + multiplier*thrs[4]*b_norms[4]
+                    vector = vector + multiplier*thrs_to_add[4]*b_norms[4]
             elif self.attribute == 'gender':
                 if self.coin < 0.5:
-                    vector = vector + multiplier*thrs[0]*b_norms[0]
+                    vector = vector + multiplier*thrs_to_add[0]*b_norms[0]
                 else:
-                    vector = vector + multiplier*thrs[1]*b_norms[1]
-            # elif self.attribute in ['glasses']:
-            #     if self.coin < 0.5:
-            #         vector = vector + multiplier*thrs[0]*b_norms[0]
-            #     else:
-            #         if self.do_erase:
-            #             vector = vector+steering_delta
-                    # else:   
+                    vector = vector + multiplier*thrs_to_add[1]*b_norms[1]
+            elif self.attribute == 'age':
+                if self.coin < 1.0/3.0:
+                    vector = vector + multiplier*thrs_to_add[0]*b_norms[0]
+                elif self.coin < 2.0/3.0:
+                    vector = vector + multiplier*thrs_to_add[1]*b_norms[1]
+                else:
+                    vector = vector + multiplier*thrs_to_add[2]*b_norms[2]
+            elif self.attribute == 'body':
+                if self.coin < 1.0/3.0:
+                    vector = vector + multiplier*thrs_to_add[0]*b_norms[0]
+                elif self.coin < 2.0/3.0:
+                    vector = vector + multiplier*thrs_to_add[1]*b_norms[1]
+                else:
+                    vector = vector + multiplier*thrs_to_add[2]*b_norms[2]
+            elif self.attribute in ['glasses']:
+                if self.coin < 0.5:
+                    vector = vector + multiplier*thrs_to_add[0]*b_norms[0]
+                else:
+                    vector = vector+steering_delta
             
         return vector
     
@@ -436,9 +522,10 @@ class CrossAttentionOutputSteering(VectorControl):
         self._diffusion_step = 0
         self._current_attn_layer = 0
         self._current_position = defaultdict(int)
-        if self.attribute:
-            source_concepts, target_concepts = self._flip_coin()
-            self._generate_casteer_vectors(source_concepts, target_concepts)
+        self.coin = torch.rand(1) 
+        # if self.attribute:
+        #     source_concepts, target_concepts = self._flip_coin()
+        #     self._generate_casteer_vectors(source_concepts, target_concepts)
         self.debias = False
 
 

@@ -1,5 +1,8 @@
+import os
 import torch
 from diffusers import FluxPipeline
+
+HF_TOKEN = os.environ.get('HF_TOKEN')
 
 from diffusers import StableDiffusionPipeline, DiffusionPipeline, AutoPipelineForText2Image, Transformer2DModel, LCMScheduler
 
@@ -48,13 +51,25 @@ def get_device() -> torch.device:
         return torch.device('mps')
     return torch.device('cpu')
 
+
+def _get_sana_load_config() -> dict:
+    """
+    Pick a safe dtype / placement config for SANA models.
+    """
+    if torch.cuda.is_available():
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        return {"torch_dtype": dtype, "device_map": "balanced"}
+    if torch.mps.is_available():
+        return {"torch_dtype": torch.float16}
+    return {"torch_dtype": torch.float32}
+
 SUPPORTED_DIFFUSION_MODELS = ['sd14', 'sd15', 'sd21', 'sd21-turbo', 'sdxl', 'sdxl-turbo', 'flux', 'flux-schnell', 'sana', 'sana15', 'sana-sprint', 'pixart', 'pixart-alpha', 'flash-pixart', 'sana-06', 'sana-sprint-06']
 def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
     if model == 'sd14':
         pipe = StableDiffusionPipeline.from_pretrained(
             "CompVis/stable-diffusion-v1-4",
             torch_dtype=torch.float16, 
-            cache_dir='./cache',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
             device_map='balanced',
             safety_checker=None,
         )
@@ -62,7 +77,7 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
         pipe = StableDiffusionPipeline.from_pretrained(
             "stable-diffusion-v1-5/stable-diffusion-v1-5",
             # torch_dtype=torch.float16, 
-            cache_dir='./cache',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
             device_map='balanced',
             safety_checker=None,
         )
@@ -70,7 +85,7 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
         pipe = StableDiffusionPipeline.from_pretrained(
             "stabilityai/stable-diffusion-2-1",
             # torch_dtype=torch.float16, 
-            cache_dir='./cache',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
             device_map='balanced',
         )
     elif model == 'sd21-turbo':
@@ -78,7 +93,7 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
             "stabilityai/sd-turbo", 
             # torch_dtype=torch.float16, 
             # variant="fp16",
-            cache_dir='./cache',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
             device_map='balanced',
         )
     elif model == 'sdxl':
@@ -87,7 +102,7 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
             torch_dtype=torch.float16, 
             use_safetensors=True, 
             variant="fp16",
-            cache_dir='./cache',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
             device_map='balanced',
             safety_checker=None,
         )
@@ -96,7 +111,7 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
             "stabilityai/sdxl-turbo", 
             torch_dtype=torch.float16, 
             variant="fp16",
-            cache_dir='./cache',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
             device_map='balanced',
             safety_checker=None,
         )
@@ -104,7 +119,7 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
         pipe = FluxPipeline.from_pretrained(
             "black-forest-labs/FLUX.1-dev", 
             torch_dtype=torch.bfloat16,
-            token='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',
+            token=HF_TOKEN,
 #             device_map='balanced'
         )
         pipe.enable_model_cpu_offload()
@@ -112,59 +127,59 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
         pipe = FluxPipeline.from_pretrained(
             "black-forest-labs/FLUX.1-schnell", 
             torch_dtype=torch.bfloat16,
-            token='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',
+            token=HF_TOKEN,
 #             device_map='balanced'
         )
         pipe.enable_model_cpu_offload()
     elif model == 'sana15':
         if SanaPipeline is None:
             raise ValueError("SANA is not available. Please install SANA or ensure diffusers supports SanaPipeline.")
+        sana_config = _get_sana_load_config()
         pipe = SanaPipeline.from_pretrained(
             "Efficient-Large-Model/SANA1.5_1.6B_1024px_diffusers",
-            torch_dtype=torch.bfloat16,
-            cache_dir='./cache',
-            token='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',
-            device_map='balanced',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
+            **sana_config,
         )
     elif model == 'sana':
         if SanaPipeline is None:
             raise ValueError("SANA is not available. Please install SANA or ensure diffusers supports SanaPipeline.")
+        sana_config = _get_sana_load_config()
         pipe = SanaPipeline.from_pretrained(
             "Efficient-Large-Model/Sana_Sprint_1.6B_1024px_teacher_diffusers",
-            torch_dtype=torch.bfloat16,
-            cache_dir='./cache',
-            token='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',
-            device_map='balanced',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
+            **sana_config,
         )
     elif model == 'sana-06':
         if SanaPipeline is None:
             raise ValueError("SANA is not available. Please install SANA or ensure diffusers supports SanaPipeline.")
+        sana_config = _get_sana_load_config()
         pipe = SanaPipeline.from_pretrained(
             "Efficient-Large-Model/Sana_Sprint_0.6B_1024px_teacher_diffusers",
-            torch_dtype=torch.bfloat16,
-            cache_dir='./cache',
-            token='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',
-            device_map='balanced',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
+            **sana_config,
         )
     elif model == 'sana-sprint':
         if SanaSprintPipeline is None:
             raise ValueError("SANA-Sprint is not available. Please install the latest diffusers or ensure SanaSprintPipeline is available.")
+        sana_config = _get_sana_load_config()
         pipe = SanaSprintPipeline.from_pretrained(
             "Efficient-Large-Model/Sana_Sprint_1.6B_1024px_diffusers",
-            torch_dtype=torch.bfloat16,
-            cache_dir='./cache',
-            token='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',
-            device_map='balanced',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
+            **sana_config,
         )
     elif model == 'sana-sprint-06':
         if SanaSprintPipeline is None:
             raise ValueError("SANA-Sprint is not available. Please install the latest diffusers or ensure SanaSprintPipeline is available.")
+        sana_config = _get_sana_load_config()
         pipe = SanaSprintPipeline.from_pretrained(
             "Efficient-Large-Model/Sana_Sprint_0.6B_1024px_diffusers",
-            torch_dtype=torch.bfloat16,
-            cache_dir='./cache',
-            token='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',
-            device_map='balanced',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
+            **sana_config,
         )
     elif model in ['pixart', 'pixart-alpha']:
         if PixArtAlphaPipeline is None:
@@ -172,8 +187,8 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
         pipe = PixArtAlphaPipeline.from_pretrained(
             "PixArt-alpha/PixArt-XL-2-1024-MS",
             torch_dtype=torch.float16,
-            cache_dir='./cache',
-            token='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',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
         )
     elif model == 'flash-pixart':
         if PixArtAlphaPipeline is None:
@@ -184,14 +199,14 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
             "PixArt-alpha/PixArt-XL-2-1024-MS",
             subfolder="transformer",
             torch_dtype=torch.float16,
-            cache_dir='./cache',
-            token='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',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
         )
         transformer = PeftModel.from_pretrained(
             transformer,
             "jasperai/flash-pixart",
-            cache_dir='./cache',
-            token='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',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
         )
 
         # Pipeline
@@ -199,8 +214,8 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
             "PixArt-alpha/PixArt-XL-2-1024-MS",
             transformer=transformer,
             torch_dtype=torch.float16,
-            cache_dir='./cache',
-            token='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',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
         )
 
         # Scheduler
@@ -208,8 +223,8 @@ def init_pipeline_for_image_model(model: str) -> DiffusionPipeline:
             "PixArt-alpha/PixArt-XL-2-1024-MS",
             subfolder="scheduler",
             timestep_spacing="trailing",
-            cache_dir='./cache',
-            token='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',
+            cache_dir='/gpfs/scratch/acw685/CA_diffusion_debiasing-main/cache',
+            token=HF_TOKEN,
         )
     else:
         raise ValueError(f'Unknown model: {model}')

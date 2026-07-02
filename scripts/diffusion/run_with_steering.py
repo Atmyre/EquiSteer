@@ -7,6 +7,7 @@ from diffusers import DiffusionPipeline
 from tqdm import tqdm
 
 from core.controller import CrossAttentionOutputSteering, DiffusionVectorControlMode, ModelToSteer, VectorControl
+from core.controller_multi import CrossAttentionOutputSteeringMulti
 from core.dataset import CocoDataset, TemplateDataset, dumb_tokenizer_fn
 from core.diffusion_steering import DiffusionModelType, diffusion_register_vector_controls_with_hooks
 from core.pickle import unpickle
@@ -43,27 +44,48 @@ def hook_model(pipeline: DiffusionPipeline, device: tp.Any, args: argparse.Names
         source_concepts = None
         target_concepts = None
 
-    vector_control = CrossAttentionOutputSteering(
-        model_to_steer=ModelToSteer.UNET,
-        mode=args.control_mode,
-        steer_type=args.steering_method,
-        target_concepts=target_concepts,
-        source_concepts=source_concepts,
-        steer_only_up=False,
-        steer_back=True,
-        strength=args.steering_strength,
-        device=device,
-        intermediate_clipping=args.intermediate_clipping,
-        renormalize_after_steering=args.renormalize_after_steering,
-        use_first_diffusion_step=not args.use_all_diffusion_steps,
-        save_vectors = args.save_vectors,
-        save_vectors_path = args.save_vectors_path,
-        attribute=args.attribute,
-        do_debias=args.do_debias,
-        do_erase=args.do_erase,
-        do_threshold=args.do_threshold,
-        model_name=args.model_name,
-    )
+    if args.multi_attribute_debias:
+        if args.multi_attributes:
+            attrs = tuple(a.strip().lower() for a in args.multi_attributes.split(",") if a.strip())
+        else:
+            attrs = ("race", "gender")
+        vector_control = CrossAttentionOutputSteeringMulti(
+            model_to_steer=ModelToSteer.UNET,
+            mode=args.control_mode,
+            strength=args.steering_strength,
+            device=device,
+            model_name=args.model_name,
+            attributes=attrs,
+            use_first_diffusion_step=not args.use_all_diffusion_steps,
+            renormalize_after_steering=args.renormalize_after_steering,
+            intermediate_clipping=args.intermediate_clipping,
+            do_debias=args.do_debias,
+            do_erase=args.do_erase,
+            do_threshold=args.do_threshold,
+        )
+    else:
+        vector_control = CrossAttentionOutputSteering(
+            model_to_steer=ModelToSteer.UNET,
+            mode=args.control_mode,
+            steer_type=args.steering_method,
+            target_concepts=target_concepts,
+            source_concepts=source_concepts,
+            steer_only_up=False,
+            steer_back=True,
+            strength=args.steering_strength,
+            device=device,
+            intermediate_clipping=args.intermediate_clipping,
+            renormalize_after_steering=args.renormalize_after_steering,
+            use_first_diffusion_step=not args.use_all_diffusion_steps,
+            save_vectors = args.save_vectors,
+            save_vectors_path = args.save_vectors_path,
+            attribute=args.attribute,
+            do_debias=args.do_debias,
+            do_erase=args.do_erase,
+            do_threshold=args.do_threshold,
+            gate_threshold_multiplier=args.gate_threshold_multiplier,
+            model_name=args.model_name,
+        )
 
     # Register hooks on the appropriate model component
     model_component = getattr(pipeline, 'transformer', None) or pipeline.unet
@@ -92,17 +114,29 @@ def main(args: argparse.Namespace):
     pipeline.set_progress_bar_config(disable=True)
     device = get_device()
 
-    vector_control = hook_model(pipeline, device, args)
+    if args.command == 'translate':
+        vector_control = hook_model(pipeline, device, args)
+    else:
+        vector_control = None
+        print('ololosh')
 
     
     if args.generate_concept != 'coco':
         # we will generate a single prompt for the provided concept and create multiple image for that prompt
         # dataset = [f'a photo of a {args.generate_concept}']
-        dataset = [f'a photo of a {' '.join(args.generate_concept.split('_'))}']
+        if args.prompt is not None:
+            # User-provided full prompt. Substitute {concept} (and optional {concept2}) if present.
+            concept_pretty = ' '.join(args.generate_concept.split('_'))
+            sub = {'concept': concept_pretty}
+            if args.generate_concept2 is not None:
+                sub['concept2'] = ' '.join(args.generate_concept2.split('_'))
+            dataset = [args.prompt.format(**sub)]
+        else:
+            dataset = [f'a photo of a {' '.join(args.generate_concept.split('_'))}']
         num_images_per_prompt = args.num_images_per_prompt
     else:
         import pandas as pd
-        data_csv = pd.read_csv('/home/t50045037/mmsteer/test_data/coco-30k.csv')
+        data_csv = pd.read_csv('/data/home/acw685/CA_diffusion_debiasing-main/coco-30k.csv')
         dataset = data_csv['prompt']
         seeds = data_csv['evaluation_seed']
         num_images_per_prompt = 1
@@ -139,12 +173,15 @@ def main(args: argparse.Namespace):
                     image.save(path, format=args.file_format, **SAVE_OPTIONS[args.file_format])
 
     else:
-        num_prompt = 0
-        for prompt in tqdm(dataset[0:]):
+        total = len(dataset)
+        coco_start = max(0, int(getattr(args, 'coco_start', 0) or 0))
+        coco_end = int(getattr(args, 'coco_end', None) or total)
+        coco_end = min(total, coco_end)
+        for num_prompt in tqdm(range(coco_start, coco_end)):
+            prompt = dataset[num_prompt]
             seed = int(seeds[num_prompt])
             output_paths = [f'{args.output_dir}/{num_prompt}.{EXTENSIONS[args.file_format]}']
             if all(os.path.exists(path) for path in output_paths):
-                    num_prompt += 1
                     skipped += 1
                     continue
             images = run_image_model(
@@ -160,7 +197,6 @@ def main(args: argparse.Namespace):
             os.makedirs(os.path.dirname(output_paths[0]), exist_ok=True)
             for path, image in zip(output_paths, images):
                 image.save(path, format=args.file_format, **SAVE_OPTIONS[args.file_format])
-            num_prompt += 1
             generated += 1
         
 
@@ -177,12 +213,19 @@ if __name__ == "__main__":
     main_parser.add_argument('--model_name', type=str, choices=SUPPORTED_DIFFUSION_MODELS, required=True,
                              help='Diffusion model name used for generation')
     main_parser.add_argument('--generate_concept', type=str, required=True, help='Concept for which to generate images')
+    main_parser.add_argument('--generate_concept2', type=str, default=None,
+                             help='Optional second concept (used by --prompt with {concept2} substitution)')
+    main_parser.add_argument('--prompt', type=str, default=None,
+                             help='Full prompt template. Use {concept} (and optionally {concept2}) for '
+                                  'substitution. If not given, falls back to "a photo of a {generate_concept}".')
     main_parser.add_argument('--output_dir', type=str, required=True, help='Directory where generated images should be written')
     main_parser.add_argument('--num_images_per_prompt', type=int, default=10, help='Number of images to generate for each prompt')
     main_parser.add_argument('--batch_size', type=int, default=1, help='Batch size used for image generation')
     main_parser.add_argument('--seed', type=int, default=0, help='Starting seed for each prompt')
     main_parser.add_argument('--file_format', type=str, choices=['PNG', 'JPEG'], default='PNG', help='File format for generated images')
     main_parser.add_argument('--max_samples', type=int, default=None, help='Maximum number of samples to use from the dataset')
+    main_parser.add_argument('--coco_start', type=int, default=None, help='[coco mode] First CSV row index (inclusive) to process')
+    main_parser.add_argument('--coco_end', type=int, default=None, help='[coco mode] Last CSV row index (exclusive) to process')
 
     # Steering params
     main_parser.add_argument('--steering_method', type=str, choices=['casteer'], default=None)
@@ -192,6 +235,8 @@ if __name__ == "__main__":
     main_parser.add_argument('--intermediate_clipping', action='store_true', help='Apply intermediate clipping like CASteer for leace and mean_matching')
     main_parser.add_argument('--renormalize_after_steering', action='store_true', help='Renormalize vectors after steering for leace and mean_matching')
     main_parser.add_argument('--use_all_diffusion_steps', action='store_true', help='Use all diffusion steps for leace and mean_matching')
+    main_parser.add_argument('--multi_attribute_debias', action='store_true', help='Enable simultaneous multi-attribute debiasing using controller_multi')
+    main_parser.add_argument('--multi_attributes', type=str, default=None, help='Comma-separated list of attributes for multi-attribute debiasing (e.g. "race,gender,age,body"). Defaults to "race,gender" if --multi_attribute_debias is set.')
 
     subparsers = parser.add_subparsers(dest='command')
 
@@ -225,7 +270,12 @@ if __name__ == "__main__":
     translate_parser.add_argument('--do_threshold', type=str,
                                   help='if do thresholding when debiasing')
 
+    translate_parser.add_argument('--gate_threshold_multiplier', type=float, default=1.0,
+                                  help='multiply the gating threshold thr^a (Eq. 5) by this scalar; '
+                                       'used for the threshold-sensitivity rebuttal experiment. '
+                                       'Default 1.0 = paper midpoint.')
 
+    translate_parser = subparsers.add_parser('none')
     args = parser.parse_args()
     
     main(args)

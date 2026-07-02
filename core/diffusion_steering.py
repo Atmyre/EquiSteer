@@ -35,7 +35,7 @@ class DiffusionModelType(enum.StrEnum):
             return DiffusionModelType.FLUX
         elif model in ['sana', 'sana-sprint', 'sana-06', 'sana-sprint-06', 'sana15']:
             return DiffusionModelType.SANA
-        elif model in ['sd14', 'sd21', 'sd21-turbo', 'sdxl', 'sdxl-turbo']:
+        elif model in ['sd14', 'sd15', 'sd21', 'sd21-turbo', 'sdxl', 'sdxl-turbo']:
             return DiffusionModelType.SD
         elif model in ['pixart', 'pixart-alpha', 'pixart-xl', 'flash-pixart']:
             return DiffusionModelType.PIXART
