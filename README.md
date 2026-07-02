@@ -8,6 +8,11 @@ Official implementation of **"EquiSteer: Cross-Attention Steering for Fairer Tex
     <strong>Accepted to ECCV 2026</strong>
 </div>
 
+![Teaser — nurse (SANA)](assets/teaser_sana.jpg)
+![Teaser — CEO (SDXL)](assets/teaser_sdxl.jpg)
+
+*Examples of EquiSteer for debiasing the* gender *concept. Top block: generations for the prompt "A photo of a nurse" with SANA; bottom block: "A photo of a CEO" with SDXL. In both cases, the top row corresponds to the vanilla model and the bottom row to EquiSteer, with ten generation seeds shown for each prompt.*
+
 ## Overview
 
 EquiSteer is a **training-free, inference-time framework** for debiasing text-to-image diffusion models. For each protected attribute (e.g. gender, race, age, body type, eyeglasses) it precomputes steering vectors from contrastive prompt pairs and calibrates per-direction gate thresholds. At generation time, a **prompt-aware gate** detects attribute-specific prompts and leaves them untouched, while for attribute-neutral prompts EquiSteer (i) orthogonalises the CA output against the attribute subspace, (ii) samples a target attribute value from a uniform distribution, and (iii) re-injects it at an adaptive magnitude.
